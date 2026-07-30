@@ -24,6 +24,10 @@ function dist(p1: { x: number; y: number }, p2: { x: number; y: number }): numbe
   return Math.hypot(p1.x - p2.x, p1.y - p2.y);
 }
 
+function clampRange(n: number, lo: number, hi: number): number {
+  return Math.min(hi, Math.max(lo, n));
+}
+
 export interface MotionFeatures {
   /** Signal composite : oscille avec le cycle de rame (face caméra) */
   drive: number;
@@ -72,10 +76,10 @@ export function extractFeatures(landmarks: PoseLandmark[]): MotionFeatures {
   // 1) Profondeur (avancée → épaules plus larges) — utile mais bruité
   const depth = Math.min(1.35, scale / 0.22);
 
-  // 2) Rocking du torse (nez vs épaules) — oscillatoire
+  // 2) Rocking du torse (nez vs épaules) — signé, donc monotone sur un coup
   let bust = 0.5;
   if (nose && shoulders) {
-    bust = Math.min(1.25, dist(nose, shoulders) / scale);
+    bust = clampRange((shoulders.y - nose.y) / scale, -1.2, 1.4);
   }
 
   // 3) Traction des bras : hauteur + extension (cœur du signal rame face-cam)
@@ -85,17 +89,19 @@ export function extractFeatures(landmarks: PoseLandmark[]): MotionFeatures {
     [lw, le, ls],
     [rw, re, rs],
   ] as const) {
+    // Uniquement des mesures SIGNÉES : une distance absolue repasse par zéro
+    // quand le poignet croise l'épaule et ferait compter deux coups par cycle.
     if (wrist && shoulder) {
-      const reach = dist(wrist, shoulder) / scale;
       const height = (shoulder.y - wrist.y) / scale;
+      const spread = Math.abs(wrist.x - shoulder.x) / scale;
       const elbowBend =
         elbow != null ? dist(elbow, shoulder) / (dist(wrist, elbow) + 0.001) : 1;
-      armSum += 0.42 * reach + 0.4 * Math.max(-0.3, height) + 0.18 * Math.min(2, elbowBend);
+      armSum += 0.6 * clampRange(height, -1.2, 1.6) + 0.22 * Math.min(1.4, spread) + 0.18 * Math.min(2, elbowBend);
       armN++;
     } else if (elbow && shoulder) {
-      const reach = dist(elbow, shoulder) / scale;
       const height = (shoulder.y - elbow.y) / scale;
-      armSum += 0.55 * reach + 0.45 * Math.max(-0.2, height);
+      const spread = Math.abs(elbow.x - shoulder.x) / scale;
+      armSum += 0.7 * clampRange(height, -1, 1.4) + 0.3 * Math.min(1.2, spread);
       armN++;
     }
   }

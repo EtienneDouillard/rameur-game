@@ -17,11 +17,15 @@ const CALIBRATION_WAIT_MS = 15_000;
 const CALIB_WAIT_PROGRESS = 0.2;
 const HOLD_VALID_MS = 200;
 const REFRACTORY_MIN_MS = 380;
-const REFRACTORY_MAX_MS = 800;
-const REFRACTORY_RATIO = 0.34;
-const MIN_STROKE_GAP_MS = 420;
+const REFRACTORY_MAX_MS = 1100;
+const REFRACTORY_RATIO = 0.5;
+const MIN_STROKE_GAP_MS = 400;
 /** Vitesse basse → on recale la ligne de base du signal */
 const BASELINE_LERP = 0.04;
+/** Fenêtre d'auto-réglage des seuils pendant la partie */
+const AUTOTUNE_WINDOW_MS = 4000;
+const AUTOTUNE_MIN_AMP_FLOOR = 0.025;
+const AUTOTUNE_VEL_FLOOR = 0.07;
 
 interface PlayerState {
   filter: OneEuroFilter;
@@ -38,7 +42,12 @@ interface PlayerState {
   calibIdleStartedAt: number;
   calibIdleDone: boolean;
   calibPeakVel: number[];
+  calibStrokeAmps: number[];
   calibStrokeCount: number;
+  windowStart: number;
+  windowMin: number;
+  windowMax: number;
+  windowStrokes: number;
   profile: PlayerRhythmProfile | null;
   active: boolean;
   refractoryUntil: number;
@@ -81,7 +90,12 @@ export class RhythmEngine {
       calibIdleStartedAt: 0,
       calibIdleDone: false,
       calibPeakVel: [],
+      calibStrokeAmps: [],
       calibStrokeCount: 0,
+      windowStart: 0,
+      windowMin: Infinity,
+      windowMax: -Infinity,
+      windowStrokes: 0,
       profile: null,
       active: false,
       refractoryUntil: 0,
@@ -117,7 +131,12 @@ export class RhythmEngine {
       p.calibIdleStartedAt = 0;
       p.calibIdleDone = false;
       p.calibPeakVel = [];
+      p.calibStrokeAmps = [];
       p.calibStrokeCount = 0;
+      p.windowStart = 0;
+      p.windowMin = Infinity;
+      p.windowMax = -Infinity;
+      p.windowStrokes = 0;
       p.profile = null;
       p.strokeIntervals = [];
       p.phase = "rising";
@@ -143,6 +162,33 @@ export class RhythmEngine {
 
   isPlayerIdleCalibrated(player: PlayerId): boolean {
     return this.players[player].calibIdleDone;
+  }
+
+  /** Filet de sécurité : personne ne doit rester bloqué sur l'écran de calibration. */
+  forceFinishCalibration(): void {
+    if (!this.calibrating) return;
+    const now = performance.now();
+    for (const id of this.enabled) {
+      if (!this.players[id].profile) this.finishPlayerCalibration(id, now);
+    }
+  }
+
+  getCalibStrokes(player: PlayerId): number {
+    return this.players[player].calibStrokeCount;
+  }
+
+  /** Diagnostic terrain (activé par ?debug=1) */
+  getDiagnostics(player: PlayerId): string {
+    const p = this.players[player];
+    if (!p.profile) return "calib";
+    const span = p.windowMax - p.windowMin;
+    return [
+      `amp:${span.toFixed(3)}`,
+      `min:${p.profile.minStrokeAmp.toFixed(3)}`,
+      `v:${Math.abs(p.velocity).toFixed(2)}`,
+      `vth:${p.profile.thresholds.stroke.toFixed(2)}`,
+      p.active ? "ON" : "off",
+    ].join(" ");
   }
 
   ingest(frames: PlayerPoseFrame[]): void {
@@ -189,9 +235,9 @@ export class RhythmEngine {
 
       const drive = driveFiltered - p.driveBaseline;
 
-      if (this.calibrating) {
-        if (p.profile) continue;
-
+      // Un joueur déjà calibré continue d'être suivi pendant que les autres
+      // terminent : ses filtres et sa ligne de base restent à jour.
+      if (this.calibrating && !p.profile) {
         if (!this.calibStrokesOpened) {
           p.calibIdleSamples.push(driveFiltered);
           const waitProgress =
@@ -212,8 +258,10 @@ export class RhythmEngine {
 
       if (!p.profile) continue;
 
+      this.autoTuneProfile(p, drive, now);
+
       const strokeTh = p.profile.thresholds.stroke;
-      if (Math.abs(p.velocity) > strokeTh * 0.85) {
+      if (Math.abs(p.velocity) > strokeTh * 0.6) {
         if (!p.active) {
           p.active = true;
           this.emit({ type: "PlayerActive", player: frame.player, at: now });
@@ -241,14 +289,12 @@ export class RhythmEngine {
   ): void {
     const prof = p.profile;
     const vUp = isCalib
-      ? 0.17
-      : Math.max(0.13, prof!.thresholds.stroke * 0.95);
+      ? 0.15
+      : Math.max(0.06, prof!.thresholds.stroke * 0.9);
     const vDown = isCalib
-      ? -0.14
-      : -Math.max(0.11, prof!.thresholds.stroke * 0.75);
-    const minAmp = isCalib
-      ? 0.04
-      : Math.max(prof!.minStrokeAmp, prof!.amplitudeNorm * 0.32);
+      ? -0.12
+      : -Math.max(0.05, prof!.thresholds.stroke * 0.7);
+    const minAmp = isCalib ? 0.035 : prof!.minStrokeAmp;
 
     const canFire =
       now >= p.refractoryUntil &&
@@ -325,11 +371,19 @@ export class RhythmEngine {
         p.cycleTrough = _drive;
         return;
       }
-      if (!p.active) return;
+      // Un coup d'amplitude franche réveille le joueur : on ne perd
+      // jamais un vrai mouvement à cause du drapeau d'activité.
+      if (!p.active) {
+        if (amp < p.profile.minStrokeAmp * 1.4) return;
+        p.active = true;
+        p.lastMotionAt = now;
+        this.emit({ type: "PlayerActive", player, at: now });
+      }
     }
 
     if (isCalib) {
       p.calibPeakVel.push(Math.abs(p.velocity));
+      p.calibStrokeAmps.push(amp);
       p.calibStrokeCount += 1;
       const strokePart = p.calibStrokeCount / CALIBRATION_STROKES;
       const progress =
@@ -357,15 +411,58 @@ export class RhythmEngine {
 
     if (isCalib) return;
 
-    const strength = Math.min(1, amp / (p.profile!.amplitudeNorm + 0.05));
-    if (strength < 0.38) return;
+    p.windowStrokes += 1;
+    const strength = clamp(amp / (p.profile!.amplitudeNorm + 0.02), 0.4, 1);
 
     this.emit({
       type: "StrokeDetected",
       player,
-      strength: Math.max(0.38, strength),
+      strength,
       at: now,
     });
+  }
+
+  /**
+   * Si le joueur bouge visiblement mais qu'aucun coup ne sort, on assouplit
+   * progressivement son profil : le jeu se répare tout seul au lieu de rester bloqué.
+   */
+  private autoTuneProfile(p: PlayerState, drive: number, now: number): void {
+    const prof = p.profile;
+    if (!prof) return;
+
+    if (p.windowStart === 0) {
+      p.windowStart = now;
+      p.windowMin = drive;
+      p.windowMax = drive;
+      p.windowStrokes = 0;
+      return;
+    }
+
+    p.windowMin = Math.min(p.windowMin, drive);
+    p.windowMax = Math.max(p.windowMax, drive);
+
+    if (now - p.windowStart < AUTOTUNE_WINDOW_MS) return;
+
+    const span = p.windowMax - p.windowMin;
+    const moving = span >= Math.max(prof.noiseAmp * 3, 0.05);
+
+    if (moving && p.windowStrokes === 0) {
+      prof.minStrokeAmp = Math.max(
+        AUTOTUNE_MIN_AMP_FLOOR,
+        Math.min(prof.minStrokeAmp * 0.75, span * 0.35),
+      );
+      prof.amplitudeNorm = Math.max(0.05, Math.min(prof.amplitudeNorm, span * 0.9));
+      prof.thresholds.stroke = Math.max(
+        AUTOTUNE_VEL_FLOOR,
+        prof.thresholds.stroke * 0.75,
+      );
+      prof.thresholds.idle = Math.max(0.04, prof.thresholds.stroke * 0.2);
+    }
+
+    p.windowStart = now;
+    p.windowMin = drive;
+    p.windowMax = drive;
+    p.windowStrokes = 0;
   }
 
   private tickCalibrationClock(now: number): void {
@@ -413,13 +510,7 @@ export class RhythmEngine {
     const p = this.players[player];
     if (p.profile) return;
 
-    const idle = p.calibIdleSamples;
-    const noiseAmp =
-      idle.length >= 10
-        ? percentile(idle, 0.92) - percentile(idle, 0.08)
-        : 0.025;
-
-    const intervals = p.strokeIntervals.filter((i) => i > 400 && i < 2500);
+    const intervals = p.strokeIntervals.filter((i) => i > 350 && i < 2600);
     const periodMs =
       intervals.length >= 2
         ? median(intervals)
@@ -427,31 +518,45 @@ export class RhythmEngine {
           ? intervals[0]
           : 1050;
 
+    // L'amplitude de référence vient des coups réellement joués,
+    // jamais de la phase d'attente (le joueur y bouge librement).
+    const strokeAmps = p.calibStrokeAmps.filter((a) => a > 0.005);
+    const ampFromStrokes = strokeAmps.length >= 3 ? median(strokeAmps) : 0;
     const samples = p.calibSamples;
-    const strokeAmp =
-      samples.length > 15
-        ? percentile(samples, 0.92) - percentile(samples, 0.08)
-        : samples.length > 5
-          ? percentile(samples, 0.85) - percentile(samples, 0.15)
-          : 0.12;
+    const ampFromSignal =
+      samples.length > 20
+        ? percentile(samples, 0.9) - percentile(samples, 0.1)
+        : 0;
+    const measured = Math.max(ampFromStrokes, ampFromSignal * 0.75);
+    const amplitudeNorm = clamp(measured > 0.02 ? measured : 0.11, 0.05, 1.2);
 
-    const amplitudeNorm = Math.max(0.065, strokeAmp, noiseAmp * 2.5);
-    const minStrokeAmp = Math.max(noiseAmp * 2.8, amplitudeNorm * 0.38, 0.045);
+    // Le bruit ne peut jamais dépasser une fraction de l'amplitude utile,
+    // sinon plus aucun coup ne passerait le seuil en partie.
+    const idle = p.calibIdleSamples;
+    const rawNoise =
+      idle.length >= 20 ? percentile(idle, 0.75) - percentile(idle, 0.25) : 0.02;
+    const noiseAmp = clamp(rawNoise, 0.008, amplitudeNorm * 0.3);
 
-    const peakVels = p.calibPeakVel.filter((v) => v > 0.05);
+    const minStrokeAmp = clamp(
+      Math.max(amplitudeNorm * 0.3, noiseAmp * 1.8),
+      0.028,
+      amplitudeNorm * 0.55,
+    );
+
+    const peakVels = p.calibPeakVel.filter((v) => v > 0.04);
     const velThresh =
-      peakVels.length >= 2
-        ? Math.max(0.14, median(peakVels) * 0.32)
-        : 0.18;
+      peakVels.length >= 3
+        ? clamp(median(peakVels) * 0.3, 0.1, 0.4)
+        : 0.14;
 
     const profile: PlayerRhythmProfile = {
-      periodMs: clamp(periodMs, 550, 2000),
+      periodMs: clamp(periodMs, 500, 2200),
       amplitudeNorm,
-      noiseAmp: Math.max(0.015, noiseAmp),
+      noiseAmp,
       minStrokeAmp,
       thresholds: {
         stroke: velThresh,
-        idle: Math.max(0.06, velThresh * 0.2),
+        idle: Math.max(0.05, velThresh * 0.2),
       },
     };
     p.profile = profile;

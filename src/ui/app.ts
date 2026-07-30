@@ -59,6 +59,8 @@ export class App {
   };
   private lastCharge: Record<PlayerId, number> = { player1: 0, player2: 0 };
   private calibLaunchActive = false;
+  private calibFailsafeHandle = 0;
+  private debugMode = new URLSearchParams(location.search).has("debug");
 
   constructor(root: HTMLElement, video: HTMLVideoElement) {
     this.root = root;
@@ -457,6 +459,7 @@ export class App {
     this.calibDone = { player1: false, player2: false };
     this.calibStrokeSeen = { player1: 0, player2: 0 };
     this.calibLaunchActive = false;
+    this.clearCalibFailsafe();
     this.lastCombo = { player1: 0, player2: 0 };
     this.lastComboTier = { player1: 1, player2: 1 };
     this.wasInFlow = { player1: false, player2: false };
@@ -546,6 +549,7 @@ export class App {
         step.textContent = "Ramez : le décompte descend à chaque coup reconnu.";
       }
       this.sound.playCountdownTick(false);
+      this.armCalibFailsafe();
       return;
     }
     if (ev.type === "CalibrationProgress") {
@@ -664,7 +668,26 @@ export class App {
     if (big) big.textContent = "10";
   }
 
+  /** Après 45 s sans avoir bouclé les 10 coups, on démarre quand même. */
+  private armCalibFailsafe(): void {
+    this.clearCalibFailsafe();
+    this.calibFailsafeHandle = window.setTimeout(() => {
+      if (this.calibrationComplete() || this.calibLaunchActive) return;
+      const step = this.root.querySelector<HTMLElement>("[data-calib-step]");
+      if (step) step.textContent = "Calibration approximative — on prend la mer.";
+      this.rhythm.forceFinishCalibration();
+    }, 45_000);
+  }
+
+  private clearCalibFailsafe(): void {
+    if (this.calibFailsafeHandle) {
+      window.clearTimeout(this.calibFailsafeHandle);
+      this.calibFailsafeHandle = 0;
+    }
+  }
+
   private runCalibLaunchSequence(): Promise<void> {
+    this.clearCalibFailsafe();
     this.calibLaunchActive = true;
     const chrono = this.root.querySelector<HTMLElement>("[data-calib-chrono]");
     const strokeNums = this.root.querySelector<HTMLElement>("[data-calib-stroke-nums]");
@@ -1021,7 +1044,15 @@ export class App {
         this.frameCount = 0;
         this.lastFrameAt = now;
         const footer = this.root.querySelector<HTMLElement>("[data-fps]");
-        if (footer) footer.textContent = `${fps} poses/s · ${this.vision?.getBackend() ?? ""}`;
+        if (footer) {
+          let text = `${fps} poses/s · ${this.vision?.getBackend() ?? ""}`;
+          if (this.debugMode) {
+            for (const p of activePlayers(this.playerCount)) {
+              text += ` | ${p === "player1" ? "P1" : "P2"} ${this.rhythm.getDiagnostics(p)}`;
+            }
+          }
+          footer.textContent = text;
+        }
         if (fps < 12 && this.vision) {
           void this.tryMultiposeFallback();
         }
