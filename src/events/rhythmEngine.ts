@@ -10,11 +10,11 @@ import { activePlayers, type PlayerCount } from "../types/gameMode";
 import { extractFeatures } from "./features";
 import { OneEuroFilter } from "./oneEuro";
 
-const CALIBRATION_STROKES = 5;
+const CALIBRATION_STROKES = 10;
 export { CALIBRATION_STROKES };
-/** Échantillons au repos avant les 5 coups (par joueur) */
-const CALIB_IDLE_MIN_MS = 2200;
-const CALIB_IDLE_MIN_SAMPLES = 45;
+/** Attente globale avant les coups de calibration */
+const CALIBRATION_WAIT_MS = 15_000;
+const CALIB_WAIT_PROGRESS = 0.2;
 const HOLD_VALID_MS = 200;
 const REFRACTORY_MIN_MS = 380;
 const REFRACTORY_MAX_MS = 800;
@@ -54,6 +54,9 @@ export class RhythmEngine {
   private players: Record<PlayerId, PlayerState>;
   private calibrating = false;
   private enabled: PlayerId[] = ["player1", "player2"];
+  private calibStartedAt = 0;
+  private lastWaitSecondEmitted = -1;
+  private calibStrokesOpened = false;
 
   constructor() {
     this.players = {
@@ -102,6 +105,9 @@ export class RhythmEngine {
   startCalibration(playerCount: PlayerCount = 2): void {
     this.enabled = activePlayers(playerCount);
     this.calibrating = true;
+    this.calibStartedAt = performance.now();
+    this.lastWaitSecondEmitted = -1;
+    this.calibStrokesOpened = false;
     for (const id of ["player1", "player2"] as const) {
       const p = this.players[id];
       p.filter.reset();
@@ -127,6 +133,8 @@ export class RhythmEngine {
       p.lastMotionAt = 0;
       p.velocity = 0;
     }
+    this.emit({ type: "CalibrationWait", secondsLeft: 15 });
+    this.lastWaitSecondEmitted = 15;
   }
 
   isCalibrating(): boolean {
@@ -139,6 +147,10 @@ export class RhythmEngine {
 
   ingest(frames: PlayerPoseFrame[]): void {
     const now = performance.now();
+
+    if (this.calibrating) {
+      this.tickCalibrationClock(now);
+    }
 
     for (const frame of frames) {
       if (!this.enabled.includes(frame.player)) continue;
@@ -180,28 +192,17 @@ export class RhythmEngine {
       if (this.calibrating) {
         if (p.profile) continue;
 
-        if (!p.calibIdleDone) {
-          if (p.calibIdleStartedAt === 0) p.calibIdleStartedAt = now;
+        if (!this.calibStrokesOpened) {
           p.calibIdleSamples.push(driveFiltered);
-          const idleMs = now - p.calibIdleStartedAt;
-          const idleProgress = Math.min(1, idleMs / CALIB_IDLE_MIN_MS);
-          this.emitCalibProgress(
-            frame.player,
-            idleProgress * 0.22,
-            "idle",
-            0,
-          );
-          if (
-            idleMs >= CALIB_IDLE_MIN_MS &&
-            p.calibIdleSamples.length >= CALIB_IDLE_MIN_SAMPLES
-          ) {
-            p.calibIdleDone = true;
-            p.driveBaseline = median(p.calibIdleSamples.slice(-40));
-            p.phase = "rising";
-            p.cyclePeak = drive;
-            p.cycleTrough = drive;
-          }
+          const waitProgress =
+            Math.min(1, (now - this.calibStartedAt) / CALIBRATION_WAIT_MS) *
+            CALIB_WAIT_PROGRESS;
+          this.emitCalibProgress(frame.player, waitProgress, "wait", 0);
           continue;
+        }
+
+        if (!p.calibIdleDone) {
+          this.openCalibStrokesForPlayer(p, drive);
         }
 
         p.calibSamples.push(drive);
@@ -331,7 +332,8 @@ export class RhythmEngine {
       p.calibPeakVel.push(Math.abs(p.velocity));
       p.calibStrokeCount += 1;
       const strokePart = p.calibStrokeCount / CALIBRATION_STROKES;
-      const progress = 0.22 + strokePart * 0.78;
+      const progress =
+        CALIB_WAIT_PROGRESS + strokePart * (1 - CALIB_WAIT_PROGRESS);
       this.emitCalibProgress(player, progress, "strokes", p.calibStrokeCount);
       if (p.calibStrokeCount >= CALIBRATION_STROKES) {
         this.finishPlayerCalibration(player, now);
@@ -364,6 +366,47 @@ export class RhythmEngine {
       strength: Math.max(0.38, strength),
       at: now,
     });
+  }
+
+  private tickCalibrationClock(now: number): void {
+    const elapsed = now - this.calibStartedAt;
+    const secondsLeft = Math.max(
+      0,
+      Math.ceil((CALIBRATION_WAIT_MS - elapsed) / 1000),
+    );
+
+    if (!this.calibStrokesOpened) {
+      if (secondsLeft !== this.lastWaitSecondEmitted) {
+        this.lastWaitSecondEmitted = secondsLeft;
+        this.emit({ type: "CalibrationWait", secondsLeft });
+      }
+      if (elapsed >= CALIBRATION_WAIT_MS) {
+        this.openCalibStrokesPhase();
+      }
+      return;
+    }
+  }
+
+  private openCalibStrokesPhase(): void {
+    if (this.calibStrokesOpened) return;
+    this.calibStrokesOpened = true;
+    for (const id of this.enabled) {
+      const p = this.players[id];
+      if (p.profile) continue;
+      this.openCalibStrokesForPlayer(p, 0);
+    }
+    this.emit({ type: "CalibrationStrokesBegin" });
+  }
+
+  private openCalibStrokesForPlayer(p: PlayerState, drive: number): void {
+    if (p.calibIdleDone) return;
+    const idle = p.calibIdleSamples;
+    p.driveBaseline =
+      idle.length >= 8 ? median(idle.slice(-60)) : p.driveBaseline;
+    p.calibIdleDone = true;
+    p.phase = "rising";
+    p.cyclePeak = drive;
+    p.cycleTrough = drive;
   }
 
   private finishPlayerCalibration(player: PlayerId, now: number): void {

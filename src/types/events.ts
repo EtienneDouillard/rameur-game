@@ -15,11 +15,13 @@ export type GameEvent =
   | { type: "ComboLost"; player: PlayerId; at: number }
   | { type: "PlayerIdle"; player: PlayerId; at: number }
   | { type: "PlayerActive"; player: PlayerId; at: number }
+  | { type: "CalibrationWait"; secondsLeft: number }
+  | { type: "CalibrationStrokesBegin" }
   | { type: "CalibrationProgress"; player: PlayerId; progress: number; phase: CalibrationUiPhase; strokesDone: number; strokesRequired: number }
   | { type: "CalibrationDone"; player: PlayerId; profile: PlayerRhythmProfile };
 
 /** État affiché pendant l'essai des rames */
-export type CalibrationUiPhase = "idle" | "strokes" | "ready";
+export type CalibrationUiPhase = "wait" | "strokes" | "ready";
 
 export type GameEventListener = (event: GameEvent) => void;
 

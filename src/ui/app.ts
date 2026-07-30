@@ -58,6 +58,7 @@ export class App {
     player2: new OdysseyVoice(),
   };
   private lastCharge: Record<PlayerId, number> = { player1: 0, player2: 0 };
+  private calibLaunchActive = false;
 
   constructor(root: HTMLElement, video: HTMLVideoElement) {
     this.root = root;
@@ -163,8 +164,20 @@ export class App {
             </div>
             <div class="rb-screen" data-screen="calib">
               <h2>Essai des rames</h2>
-              <p data-calib-step><strong>1.</strong> Restez <strong>immobile ~2 s</strong> face à la caméra.</p>
-              <p class="rb-mode-hint" data-calib-hint>Puis 5 coups de rame pour calibrer l'IA sur votre mouvement.</p>
+              <p data-calib-step>Préparez-vous — chrono de mise en place.</p>
+              <p class="rb-calib-chrono" data-calib-chrono aria-live="polite">15</p>
+              <p class="rb-calib-phase-label" data-calib-phase-label></p>
+              <div class="rb-calib-stroke-nums" data-calib-stroke-nums hidden>
+                <div class="rb-calib-stroke-col" data-calib-stroke-col="p1">
+                  <span class="rb-calib-stroke-label" data-calib-stroke-label="p1">Bâbord</span>
+                  <span class="rb-calib-stroke-big" data-calib-big="p1">10</span>
+                </div>
+                <div class="rb-calib-stroke-col" data-calib-stroke-col="p2">
+                  <span class="rb-calib-stroke-label" data-calib-stroke-label="p2">Tribord</span>
+                  <span class="rb-calib-stroke-big" data-calib-big="p2">10</span>
+                </div>
+              </div>
+              <p class="rb-mode-hint" data-calib-hint></p>
               <div class="rb-calib-bars">
                 <div class="rb-calib-row" data-calib-wrap="p1">
                   <p class="rb-calib-detail" data-calib-detail="p1">…</p>
@@ -443,6 +456,7 @@ export class App {
     this.multiposeTried = false;
     this.calibDone = { player1: false, player2: false };
     this.calibStrokeSeen = { player1: 0, player2: 0 };
+    this.calibLaunchActive = false;
     this.lastCombo = { player1: 0, player2: 0 };
     this.lastComboTier = { player1: 1, player2: 1 };
     this.wasInFlow = { player1: false, player2: false };
@@ -459,8 +473,37 @@ export class App {
     if (calibHint) {
       calibHint.textContent =
         this.playerCount === 1
-          ? "Ne bougez pas au début, puis ramez comme en partie."
-          : "Chaque marin : immobile, puis 5 coups.";
+          ? "15 s de préparation, puis 10 coups de rame."
+          : "15 s de préparation, puis 10 coups chacun.";
+    }
+    const chrono = this.root.querySelector<HTMLElement>("[data-calib-chrono]");
+    if (chrono) {
+      chrono.textContent = "15";
+      chrono.hidden = false;
+      chrono.classList.remove("rb-calib-chrono--launch", "rb-calib-chrono--stroke");
+    }
+    const strokeNums = this.root.querySelector<HTMLElement>("[data-calib-stroke-nums]");
+    if (strokeNums) strokeNums.hidden = true;
+    const phaseLabel = this.root.querySelector<HTMLElement>("[data-calib-phase-label]");
+    if (phaseLabel) phaseLabel.textContent = "secondes";
+    for (const key of ["p1", "p2"] as const) {
+      const big = this.root.querySelector<HTMLElement>(`[data-calib-big="${key}"]`);
+      if (big) big.textContent = "10";
+      const lab = this.root.querySelector<HTMLElement>(`[data-calib-stroke-label="${key}"]`);
+      if (lab) {
+        lab.textContent =
+          this.playerCount === 1
+            ? "Vous"
+            : key === "p1"
+              ? "Bâbord"
+              : "Tribord";
+      }
+      const col = this.root.querySelector<HTMLElement>(`[data-calib-stroke-col="${key}"]`);
+      if (col) col.hidden = this.playerCount === 1 && key === "p2";
+    }
+    const step = this.root.querySelector<HTMLElement>("[data-calib-step]");
+    if (step) {
+      step.textContent = "Restez en place — le chrono mesure la préparation.";
     }
     const p2Wrap = this.root.querySelector<HTMLElement>('[data-calib-wrap="p2"]');
     if (p2Wrap) p2Wrap.hidden = this.playerCount === 1;
@@ -476,6 +519,35 @@ export class App {
   }
 
   private onRhythmEvent(ev: GameEvent): void {
+    if (ev.type === "CalibrationWait") {
+      const chrono = this.root.querySelector<HTMLElement>("[data-calib-chrono]");
+      if (chrono) chrono.textContent = String(ev.secondsLeft);
+      if (ev.secondsLeft > 0) {
+        this.sound.playCountdownTick(ev.secondsLeft <= 3);
+      }
+      const barProgress =
+        ((15 - ev.secondsLeft) / 15) * 0.2;
+      for (const player of activePlayers(this.playerCount)) {
+        const key = player === "player1" ? "p1" : "p2";
+        const bar = this.root.querySelector<HTMLElement>(`[data-calib="${key}"]`);
+        if (bar) bar.style.width = `${Math.round(barProgress * 100)}%`;
+      }
+      return;
+    }
+    if (ev.type === "CalibrationStrokesBegin") {
+      const chrono = this.root.querySelector<HTMLElement>("[data-calib-chrono]");
+      if (chrono) chrono.hidden = true;
+      const phaseLabel = this.root.querySelector<HTMLElement>("[data-calib-phase-label]");
+      if (phaseLabel) phaseLabel.textContent = "coups restants";
+      const strokeNums = this.root.querySelector<HTMLElement>("[data-calib-stroke-nums]");
+      if (strokeNums) strokeNums.hidden = false;
+      const step = this.root.querySelector<HTMLElement>("[data-calib-step]");
+      if (step) {
+        step.textContent = "Ramez : le décompte descend à chaque coup reconnu.";
+      }
+      this.sound.playCountdownTick(false);
+      return;
+    }
     if (ev.type === "CalibrationProgress") {
       const key = ev.player === "player1" ? "p1" : "p2";
       const bar = this.root.querySelector<HTMLElement>(`[data-calib="${key}"]`);
@@ -485,42 +557,47 @@ export class App {
       const detail = this.root.querySelector<HTMLElement>(`[data-calib-detail="${key}"]`);
       const label = this.calibPlayerLabel(ev.player);
       if (detail) {
-        if (ev.phase === "idle") {
-          detail.textContent = `${label} : immobile — l'IA mesure le repos…`;
+        if (ev.phase === "wait") {
+          detail.textContent = `${label} : préparation…`;
         } else if (ev.phase === "strokes") {
-          detail.textContent = `${label} : coup ${ev.strokesDone} / ${ev.strokesRequired}`;
+          const left = ev.strokesRequired - ev.strokesDone;
+          detail.textContent = `${label} : encore ${left} coup${left > 1 ? "s" : ""}`;
         } else {
-          detail.textContent = `${label} : profil enregistré ✓`;
+          detail.textContent = `${label} : prêt ✓`;
         }
       }
-      if (
-        ev.phase === "strokes" &&
-        ev.strokesDone > this.calibStrokeSeen[ev.player]
-      ) {
+      const big = this.root.querySelector<HTMLElement>(`[data-calib-big="${key}"]`);
+      if (big && ev.phase === "strokes") {
+        const left = ev.strokesRequired - ev.strokesDone;
+        big.textContent = String(left);
+        big.classList.add("rb-calib-stroke-big--pop");
+        void big.offsetWidth;
+        big.classList.remove("rb-calib-stroke-big--pop");
+      }
+      if (ev.phase === "strokes" && ev.strokesDone > this.calibStrokeSeen[ev.player]) {
         this.calibStrokeSeen[ev.player] = ev.strokesDone;
+        const left = ev.strokesRequired - ev.strokesDone;
+        this.sound.playCountdownTick(left <= 3);
         this.sound.playStroke(1);
       }
       const step = this.root.querySelector<HTMLElement>("[data-calib-step]");
       if (step) {
-        if (ev.phase === "idle") {
-          step.innerHTML =
-            "<strong>1.</strong> Restez <strong>immobile ~2 s</strong> — l'IA mesure le calme de la mer.";
+        if (ev.phase === "wait") {
+          step.textContent = "Restez en place — le chrono mesure la préparation.";
         } else if (ev.phase === "strokes") {
-          step.innerHTML =
-            "<strong>2.</strong> Ramez : <strong>5 coups</strong> nets (un petit son confirme chaque coup compté).";
+          step.textContent = "Ramez : le décompte descend à chaque coup reconnu.";
         } else {
-          step.innerHTML =
-            "<strong>Terminé</strong> pour ce marin — en attente des autres ou départ imminent…";
+          step.textContent = "Marin prêt — en attente de l'équipage…";
         }
       }
     }
     if (ev.type === "CalibrationDone") {
       this.calibDone[ev.player] = true;
-      if (this.calibrationComplete()) {
-        this.showScreen("play");
-        this.setPhaseText("");
-        this.game.startPlaying();
-        void this.music?.start();
+      const key = ev.player === "player1" ? "p1" : "p2";
+      const big = this.root.querySelector<HTMLElement>(`[data-calib-big="${key}"]`);
+      if (big) big.textContent = "✓";
+      if (this.calibrationComplete() && !this.calibLaunchActive) {
+        void this.runCalibLaunchSequence();
       }
     }
     if (ev.type === "StrokeDetected" && this.game.getPhase() === "playing") {
@@ -583,6 +660,44 @@ export class App {
     wrap?.classList.remove("rb-calib-row--ready");
     const detail = this.root.querySelector<HTMLElement>(`[data-calib-detail="${key}"]`);
     if (detail) detail.textContent = "…";
+    const big = this.root.querySelector<HTMLElement>(`[data-calib-big="${key}"]`);
+    if (big) big.textContent = "10";
+  }
+
+  private runCalibLaunchSequence(): Promise<void> {
+    this.calibLaunchActive = true;
+    const chrono = this.root.querySelector<HTMLElement>("[data-calib-chrono]");
+    const strokeNums = this.root.querySelector<HTMLElement>("[data-calib-stroke-nums]");
+    const phaseLabel = this.root.querySelector<HTMLElement>("[data-calib-phase-label]");
+    const step = this.root.querySelector<HTMLElement>("[data-calib-step]");
+    if (strokeNums) strokeNums.hidden = true;
+    chrono?.classList.remove("rb-calib-chrono--stroke");
+    if (chrono) chrono.hidden = false;
+    chrono?.classList.add("rb-calib-chrono--launch");
+    if (phaseLabel) phaseLabel.textContent = "";
+    if (step) step.textContent = "Tout l'équipage est prêt.";
+
+    const wait = (ms: number) =>
+      new Promise<void>((resolve) => {
+        window.setTimeout(resolve, ms);
+      });
+
+    return (async () => {
+      for (const n of ["3", "2", "1"] as const) {
+        if (chrono) chrono.textContent = n;
+        this.sound.playCountdownTick(n === "1");
+        await wait(1000);
+      }
+      if (chrono) chrono.textContent = "EN MER";
+      if (step) step.textContent = "";
+      this.sound.playCountdownTick(true);
+      await wait(1100);
+      this.calibLaunchActive = false;
+      this.showScreen("play");
+      this.setPhaseText("En mer…");
+      this.game.startPlaying();
+      void this.music?.start();
+    })();
   }
 
   private playerSide(player: PlayerId): "left" | "right" | "center" {

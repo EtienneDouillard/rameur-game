@@ -123,7 +123,7 @@ type GameEvent =
   | { type: "ComboLost"; player: PlayerId; at: number }
   | { type: "PlayerIdle"; player: PlayerId; at: number }
   | { type: "PlayerActive"; player: PlayerId; at: number }
-  | { type: "CalibrationProgress"; player: PlayerId; progress: number; phase: "idle" | "strokes" | "ready"; strokesDone: number; strokesRequired: number }
+  | { type: "CalibrationProgress"; player: PlayerId; progress: number; phase: "wait" | "strokes" | "ready"; strokesDone: number; strokesRequired: number }
   | { type: "CalibrationDone"; player: PlayerId; profile: PlayerRhythmProfile };
 
 interface PlayerRhythmProfile {
@@ -154,14 +154,14 @@ Par joueur, à partir des landmarks MoveNet :
 - **One Euro Filter** (ou EMA double) sur chaque feature.  
 - Détection de coup : passage de phase (ex. minimum local de `bustCompression` suivi d’un maximum) + **fenêtre refractory** (~40 % de la période calibrée) pour éviter les doubles triggers.
 
-### 4.4 Calibration automatique (repos + 5 coups)
+### 4.4 Calibration automatique (15 s + 10 coups + départ)
 
 Au démarrage de partie (écran « Essai des rames ») :
 
-1. **~2,2 s immobile** par joueur : mesure du bruit caméra et ligne de base.  
-2. **5 coups** de rame reconnus (compteur affiché, son de confirmation).  
+1. **15 s de préparation** (chrono global) : mesure du calme / bruit caméra.  
+2. **10 coups** de rame reconnus (décompte 10 → 1 par joueur).  
 3. Calcul par joueur : période médiane, amplitude, `noiseAmp`, `minStrokeAmp`, seuils `stroke` / `idle`.  
-4. Émission `CalibrationDone` → le gameplay démarre quand tous les joueurs actifs ont fini.
+4. Quand **tous** les joueurs actifs ont fini : décompte **3 · 2 · 1 · EN MER**, puis `CalibrationDone` / début de partie.
 
 Aucun réglage manuel.
 
