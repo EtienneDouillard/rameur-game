@@ -11,11 +11,13 @@ npm run dev
 
 Ouvrir l’URL affichée (HTTPS requis en production pour la caméra). Utilisez **Chrome** ou **Safari** sur iPad / Mac / PC.
 
-## Déploiement Netlify
+## Déploiement Netlify (automatique)
 
-- Build : `npm run build`
-- Publish directory : `dist`
-- Fichier `netlify.toml` inclus
+1. **Une seule fois** : [Netlify](https://app.netlify.com) → *Import from Git* → repo `rameur-game` → branche **`main`**.
+2. Netlify lit [`netlify.toml`](netlify.toml) (`npm run build` → `dist`).
+3. **Ensuite** : chaque `git push origin main` redéploie le site tout seul.
+
+Guide détaillé : **[docs/DEPLOIEMENT-NETLIFY.md](docs/DEPLOIEMENT-NETLIFY.md)**.
 
 ## Architecture
 

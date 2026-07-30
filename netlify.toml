@@ -2,6 +2,13 @@
   command = "npm run build"
   publish = "dist"
 
+[build.environment]
+  NODE_VERSION = "20"
+  NPM_FLAGS = "--no-audit"
+
+# Déploiement continu : lier ce dépôt GitHub dans Netlify (voir docs/DEPLOIEMENT-NETLIFY.md).
+# Chaque push sur la branche de production déclenche un build automatique.
+
 [[headers]]
   for = "/assets/*"
   [headers.values]
