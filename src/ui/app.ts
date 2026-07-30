@@ -21,10 +21,13 @@ import { loadVideoPrefs, saveVideoPrefs } from "../vision/videoPrefs";
 import { OdysseyVoice } from "./odysseyVoice";
 import {
   DEFAULT_MATCH_DURATION_SEC,
+  formatDurationLabel,
   formatMatchTimer,
+  formatScore,
   MATCH_DURATION_OPTIONS,
   type MatchDurationSec,
 } from "../types/matchDuration";
+import { loadDurationPref, saveDurationPref } from "./durationPrefs";
 
 export class App {
   private root: HTMLElement;
@@ -50,6 +53,9 @@ export class App {
   private lastComboTier: Record<PlayerId, number> = { player1: 1, player2: 1 };
   private lastCountdownSec = -1;
   private matchDurationSec: MatchDurationSec = DEFAULT_MATCH_DURATION_SEC;
+  private durationScroller: HTMLElement | null = null;
+  private durationWheelReady = false;
+  private durationScrollLockUntil = 0;
   private audioMusicOn = true;
   private audioSfxOn = true;
   private videoMirrorOn = false;
@@ -143,13 +149,28 @@ export class App {
                 <button type="button" class="rb-mode" data-mode="2">2 joueurs</button>
               </div>
               <p class="rb-mode-hint" data-mode-hint>Solo : placez-vous au centre du cadre.</p>
-              <p class="rb-mode-label">Durée de la partie</p>
-              <div class="rb-mode-picker" role="group" aria-label="Durée">
-                ${MATCH_DURATION_OPTIONS.map(
-                  (sec) =>
-                    `<button type="button" class="rb-mode rb-duration" data-duration="${sec}">${sec}s</button>`,
-                ).join("")}
+              <p class="rb-mode-label">Durée de la séance</p>
+              <div class="rb-wheel" data-duration-wheel>
+                <button type="button" class="rb-wheel-step" data-duration-step="-1" aria-label="Durée plus courte">−</button>
+                <div
+                  class="rb-wheel-window"
+                  data-duration-scroll
+                  role="listbox"
+                  tabindex="0"
+                  aria-label="Durée de la séance"
+                >
+                  <ul class="rb-wheel-list">
+                    ${MATCH_DURATION_OPTIONS.map(
+                      (sec) =>
+                        `<li class="rb-wheel-item" role="option" aria-selected="false" data-duration="${sec}">${formatDurationLabel(
+                          sec,
+                        )}</li>`,
+                    ).join("")}
+                  </ul>
+                </div>
+                <button type="button" class="rb-wheel-step" data-duration-step="1" aria-label="Durée plus longue">+</button>
               </div>
+              <p class="rb-mode-hint">Séance de <strong data-duration-readout>1 min 30</strong> — faites tourner la roulette.</p>
               <p class="rb-mode-label">Caméra</p>
               <div class="rb-mode-picker" role="group" aria-label="Affichage caméra">
                 <button type="button" class="rb-mode" data-video-mirror-toggle>Retourner la vidéo : OFF</button>
@@ -255,11 +276,9 @@ export class App {
     this.root.querySelectorAll<HTMLButtonElement>("[data-mode]").forEach((btn) => {
       btn.onclick = () => this.setPlayerCount(Number(btn.dataset.mode) as PlayerCount);
     });
-    this.root.querySelectorAll<HTMLButtonElement>("[data-duration]").forEach((btn) => {
-      btn.onclick = () => this.setMatchDuration(Number(btn.dataset.duration) as MatchDurationSec);
-    });
+    this.setupDurationWheel();
     this.setPlayerCount(1);
-    this.setMatchDuration(DEFAULT_MATCH_DURATION_SEC);
+    this.setMatchDuration(loadDurationPref());
     this.applyAudioPrefs(loadAudioPrefs());
     this.applyVideoPrefs(loadVideoPrefs());
 
@@ -300,13 +319,96 @@ export class App {
         : "Duo : marin de bâbord à gauche, tribord à droite.";
   }
 
-  private setMatchDuration(sec: MatchDurationSec): void {
-    this.matchDurationSec = sec;
-    this.root.querySelectorAll<HTMLButtonElement>("[data-duration]").forEach((btn) => {
-      btn.classList.toggle("rb-mode--active", Number(btn.dataset.duration) === sec);
+  /**
+   * Roulette de durée : molette tactile aimantée, plus des boutons ± et les
+   * flèches du clavier pour ceux qui ne font pas défiler.
+   */
+  private setupDurationWheel(): void {
+    const scroller = this.root.querySelector<HTMLElement>("[data-duration-scroll]");
+    if (!scroller) return;
+    this.durationScroller = scroller;
+
+    let settle = 0;
+    scroller.addEventListener("scroll", () => {
+      this.paintDurationWheel();
+      window.clearTimeout(settle);
+      settle = window.setTimeout(() => {
+        // Un défilement programmé (boutons ±, flèches) fait déjà autorité :
+        // on ignore l'écho de son animation pour ne pas sauter un cran.
+        if (performance.now() < this.durationScrollLockUntil) return;
+        const sec = MATCH_DURATION_OPTIONS[this.durationIndexFromScroll()];
+        if (sec !== this.matchDurationSec) this.setMatchDuration(sec, false);
+      }, 90);
     });
+
+    scroller.addEventListener("keydown", (ev) => {
+      if (ev.key !== "ArrowUp" && ev.key !== "ArrowDown") return;
+      ev.preventDefault();
+      this.stepMatchDuration(ev.key === "ArrowDown" ? 1 : -1);
+    });
+
+    scroller.querySelectorAll<HTMLElement>("[data-duration]").forEach((item) => {
+      item.onclick = () => this.setMatchDuration(Number(item.dataset.duration) as MatchDurationSec);
+    });
+
+    this.root.querySelectorAll<HTMLButtonElement>("[data-duration-step]").forEach((btn) => {
+      btn.onclick = () => this.stepMatchDuration(Number(btn.dataset.durationStep));
+    });
+  }
+
+  private durationItemHeight(): number {
+    const first = this.durationScroller?.querySelector<HTMLElement>(".rb-wheel-item");
+    return first?.offsetHeight || 44;
+  }
+
+  private durationIndexFromScroll(): number {
+    const scroller = this.durationScroller;
+    if (!scroller) return MATCH_DURATION_OPTIONS.indexOf(this.matchDurationSec);
+    const raw = Math.round(scroller.scrollTop / this.durationItemHeight());
+    return Math.max(0, Math.min(MATCH_DURATION_OPTIONS.length - 1, raw));
+  }
+
+  private stepMatchDuration(delta: number): void {
+    const index = MATCH_DURATION_OPTIONS.indexOf(this.matchDurationSec) + delta;
+    const clamped = Math.max(0, Math.min(MATCH_DURATION_OPTIONS.length - 1, index));
+    this.setMatchDuration(MATCH_DURATION_OPTIONS[clamped]);
+  }
+
+  /** Met en avant la ligne centrée et estompe les voisines. */
+  private paintDurationWheel(): void {
+    const scroller = this.durationScroller;
+    if (!scroller) return;
+    const center = this.durationIndexFromScroll();
+    scroller.querySelectorAll<HTMLElement>(".rb-wheel-item").forEach((item, i) => {
+      const away = Math.min(3, Math.abs(i - center));
+      item.classList.toggle("rb-wheel-item--active", away === 0);
+      item.setAttribute("aria-selected", away === 0 ? "true" : "false");
+      item.style.setProperty("--away", String(away));
+    });
+  }
+
+  private setMatchDuration(sec: MatchDurationSec, scroll = true): void {
+    this.matchDurationSec = sec;
+    saveDurationPref(sec);
+
+    const scroller = this.durationScroller;
+    if (scroller) {
+      const index = MATCH_DURATION_OPTIONS.indexOf(sec);
+      if (scroll && index >= 0) {
+        this.durationScrollLockUntil = performance.now() + 400;
+        scroller.scrollTo({
+          top: index * this.durationItemHeight(),
+          behavior: this.durationWheelReady ? "smooth" : "auto",
+        });
+      }
+      this.durationWheelReady = true;
+      this.paintDurationWheel();
+    }
+
     const timerEl = this.root.querySelector<HTMLElement>("[data-timer]");
     if (timerEl) timerEl.textContent = formatMatchTimer(sec);
+    const readout = this.root.querySelector<HTMLElement>("[data-duration-readout]");
+    if (readout) readout.textContent = formatDurationLabel(sec);
   }
 
   private applyAudioPrefs(prefs: { music: boolean; sfx: boolean }): void {
@@ -915,8 +1017,8 @@ export class App {
   }
 
   private updateHud(snap: GameSnapshot): void {
-    this.root.querySelector<HTMLElement>('[data-score="p1"]')!.textContent = String(snap.player1.score);
-    this.root.querySelector<HTMLElement>('[data-score="p2"]')!.textContent = String(snap.player2.score);
+    this.root.querySelector<HTMLElement>('[data-score="p1"]')!.textContent = formatScore(snap.player1.score);
+    this.root.querySelector<HTMLElement>('[data-score="p2"]')!.textContent = formatScore(snap.player2.score);
     const c1 = this.root.querySelector<HTMLElement>('[data-combo="p1"]')!;
     const c2 = this.root.querySelector<HTMLElement>('[data-combo="p2"]')!;
     c1.textContent = comboLabel(snap.player1.combo);
@@ -1018,7 +1120,7 @@ export class App {
     el.hidden = false;
     el.innerHTML = `
       <h3>${label}</h3>
-      <div class="rb-stat"><span>Score</span><strong>${stats.score}</strong></div>
+      <div class="rb-stat"><span>Score</span><strong>${formatScore(stats.score)}</strong></div>
       <div class="rb-stat"><span>Combo max</span><strong>×${multiplierForCombo(stats.maxCombo)}</strong></div>
       <div class="rb-stat"><span>Coups</span><strong>${stats.strokes}</strong></div>
       <div class="rb-stat"><span>Régularité</span><strong>${this.game.regularityPercent(player)}%</strong></div>

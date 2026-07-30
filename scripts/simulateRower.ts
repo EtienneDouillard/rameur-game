@@ -6,6 +6,7 @@
  */
 import { RhythmEngine, CALIBRATION_STROKES } from "../src/events/rhythmEngine";
 import { GameSession } from "../src/game/gameSession";
+import { formatDurationLabel, type MatchDurationSec } from "../src/types/matchDuration";
 import type { GameEvent, PlayerPoseFrame, PoseLandmark } from "../src/types/events";
 
 const FPS = 30;
@@ -306,6 +307,36 @@ function runScore(): { ok: boolean; detail: string } {
 const scoring = runScore();
 if (!scoring.ok) failures++;
 console.log(`${scoring.ok ? "OK  " : "FAIL"} ${"score lisible".padEnd(32)} ${scoring.detail}`);
+
+/** La durée choisie à la roulette pilote bien la fin de manche. */
+function runDuration(durationSec: MatchDurationSec): { ok: boolean; detail: string } {
+  clock = 0;
+  const game = new GameSession();
+  game.beginCalibration(1, durationSec);
+  game.startPlaying();
+
+  let endedAt = -1;
+  for (let i = 0; i < (durationSec + 5) * FPS; i++) {
+    clock += DT;
+    const frame = pendingFrame;
+    pendingFrame = null;
+    frame?.();
+    if (endedAt < 0 && game.getPhase() === "finished") endedAt = clock / 1000;
+  }
+  game.stop();
+
+  const ok = endedAt >= durationSec && endedAt < durationSec + 0.5;
+  return {
+    ok,
+    detail: `${formatDurationLabel(durationSec)} → fin à ${endedAt.toFixed(1)} s`,
+  };
+}
+
+for (const sec of [30, 90, 600, 1800] as const) {
+  const res = runDuration(sec);
+  if (!res.ok) failures++;
+  console.log(`${res.ok ? "OK  " : "FAIL"} ${`durée ${formatDurationLabel(sec)}`.padEnd(32)} ${res.detail}`);
+}
 
 if (failures > 0) {
   console.error(`\n${failures} scénario(s) en échec`);

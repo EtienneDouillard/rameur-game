@@ -1269,6 +1269,113 @@ body {
   margin: 0.25rem 0;
 }
 
+/* Roulette de durée de séance */
+.rb-wheel {
+  --wheel-item-h: 46px;
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+  margin-bottom: 0.25rem;
+}
+
+.rb-wheel-step {
+  flex: none;
+  width: 2.5rem;
+  height: 2.5rem;
+  border-radius: 999px;
+  border: 2px solid rgba(255, 255, 255, 0.15);
+  background: rgba(0, 0, 0, 0.35);
+  color: var(--text);
+  font-size: 1.4rem;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.rb-wheel-step:active {
+  border-color: var(--gold);
+  background: rgba(164, 22, 26, 0.25);
+}
+
+.rb-wheel-window {
+  position: relative;
+  width: 11rem;
+  height: calc(var(--wheel-item-h) * 3);
+  overflow-y: auto;
+  scroll-snap-type: y mandatory;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+  border-radius: 1rem;
+  border: 2px solid rgba(255, 255, 255, 0.12);
+  background: rgba(0, 0, 0, 0.35);
+  /* Estompe le haut et le bas pour l'effet tambour */
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    transparent,
+    #000 22%,
+    #000 78%,
+    transparent
+  );
+  mask-image: linear-gradient(to bottom, transparent, #000 22%, #000 78%, transparent);
+}
+
+.rb-wheel-window::-webkit-scrollbar {
+  display: none;
+}
+
+.rb-wheel-window:focus-visible {
+  outline: 2px solid var(--gold);
+  outline-offset: 2px;
+}
+
+.rb-wheel-list {
+  list-style: none;
+  margin: 0;
+  padding: var(--wheel-item-h) 0;
+}
+
+.rb-wheel-item {
+  --away: 3;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: var(--wheel-item-h);
+  scroll-snap-align: center;
+  font-family: var(--font-body);
+  font-weight: 700;
+  font-size: 1.05rem;
+  color: var(--text);
+  cursor: pointer;
+  opacity: calc(1 - var(--away) * 0.28);
+  transform: scale(calc(1 - var(--away) * 0.09));
+  transition:
+    opacity 0.15s linear,
+    transform 0.15s linear;
+}
+
+.rb-wheel-item--active {
+  color: var(--gold);
+  font-size: 1.35rem;
+  text-shadow: 0 0 18px rgba(212, 168, 75, 0.45);
+}
+
+/* Fenêtre de sélection centrale */
+.rb-wheel::before {
+  content: "";
+  position: absolute;
+  pointer-events: none;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 11rem;
+  height: var(--wheel-item-h);
+  border-top: 1px solid rgba(212, 168, 75, 0.45);
+  border-bottom: 1px solid rgba(212, 168, 75, 0.45);
+}
+
 .rb--1p .rb-hud-row {
   grid-template-columns: 1fr;
   justify-items: center;
@@ -1364,6 +1471,58 @@ body {
 
 .rb--preplay .rb-screen--active {
   margin: auto;
+}
+
+/* iPad paysage : la roulette a besoin de place, on resserre le menu. */
+@media (max-height: 880px) {
+  .rb--preplay .rb-epic-tagline {
+    display: none;
+  }
+
+  .rb--preplay .rb-screen h1 {
+    font-size: clamp(2.4rem, 9vh, 3.6rem);
+    margin-bottom: 0.2rem;
+  }
+
+  .rb--preplay .rb-mode-label {
+    margin-top: 0.55rem;
+  }
+
+  .rb--preplay .rb-wheel {
+    --wheel-item-h: 40px;
+  }
+}
+
+@media (max-height: 720px) {
+  .rb--preplay .rb-epic-kicker {
+    display: none;
+  }
+
+  .rb--preplay .rb-screen {
+    padding: 0.9rem 1.25rem;
+  }
+
+  .rb--preplay .rb-screen h1 {
+    font-size: clamp(1.9rem, 7vh, 2.8rem);
+  }
+
+  .rb--preplay .rb-mode-label {
+    margin-top: 0.4rem;
+  }
+
+  .rb--preplay .rb-mode,
+  .rb--preplay .rb-wheel-step {
+    padding: 0.5rem 1rem;
+  }
+
+  .rb--preplay .rb-mode-hint {
+    font-size: 0.78rem;
+    margin: 0.1rem 0;
+  }
+
+  .rb--preplay .rb-wheel {
+    --wheel-item-h: 36px;
+  }
 }
 
 @media (orientation: landscape) and (max-height: 520px) {
