@@ -4,8 +4,6 @@ import { activePlayers } from "../types/gameMode";
 import { RhythmEngine } from "../events/rhythmEngine";
 import {
   GameSession,
-  comboLabel,
-  multiplierForCombo,
   type GameSnapshot,
 } from "../game/gameSession";
 import { SoundEngine } from "../audio/soundEngine";
@@ -13,6 +11,9 @@ import { PoseVision } from "../vision/poseVision";
 import { startCamera, stopCamera } from "../vision/camera";
 import { ParticleField } from "./particles";
 import { VideoStageFx } from "./videoStageFx";
+import { CameraRig } from "./cameraRig";
+import { MusicEngine } from "../audio/musicEngine";
+import { multiplierForCombo, comboLabel } from "../game/gameSession";
 
 export class App {
   private root: HTMLElement;
@@ -24,6 +25,8 @@ export class App {
   private vision: PoseVision | null = null;
   private particles: ParticleField | null = null;
   private videoFx: VideoStageFx | null = null;
+  private cameraRig: CameraRig | null = null;
+  private music: MusicEngine | null = null;
   private lastCombo: Record<PlayerId, number> = { player1: 0, player2: 0 };
   private calibDone: Record<PlayerId, boolean> = { player1: false, player2: false };
   private lastFrameAt = 0;
@@ -31,6 +34,10 @@ export class App {
   private animHandle = 0;
   private prevSnap: GameSnapshot | null = null;
   private lastPoints: Record<PlayerId, number> = { player1: 0, player2: 0 };
+  private wasInFlow: Record<PlayerId, boolean> = { player1: false, player2: false };
+  private wasOverdrive: Record<PlayerId, boolean> = { player1: false, player2: false };
+  private lastComboTier: Record<PlayerId, number> = { player1: 1, player2: 1 };
+  private lastCountdownSec = -1;
 
   constructor(root: HTMLElement, video: HTMLVideoElement) {
     this.root = root;
@@ -41,7 +48,7 @@ export class App {
   private renderShell(): void {
     this.root.innerHTML = `
       <div class="rb rb--2p" data-rb>
-        <div class="rb-video-stage">
+        <div class="rb-video-stage" data-cam-stage>
           <div class="rb-video-slot"></div>
           <div class="rb-video-fx" data-video-fx></div>
           <canvas class="rb-video-rings" aria-hidden="true"></canvas>
@@ -49,19 +56,29 @@ export class App {
           <div class="rb-video-divider" data-video-divider aria-hidden="true"></div>
         </div>
         <canvas class="rb-particles" aria-hidden="true"></canvas>
-        <header class="rb-header">
-          <div class="rb-player rb-player--left" data-panel="p1">
-            <div class="rb-score" data-score="p1">0</div>
-            <div class="rb-combo" data-combo="p1"></div>
+        <header class="rb-hud">
+          <div class="rb-hud-row">
+            <div class="rb-hud-side rb-hud-side--left" data-panel="p1">
+              <div class="rb-score rb-score--bounce" data-score="p1">0</div>
+              <div class="rb-combo" data-combo="p1"></div>
+              <div class="rb-flow-badge" data-flow="p1" hidden>FLOW</div>
+            </div>
+            <div class="rb-hud-side rb-hud-side--right" data-panel="p2">
+              <div class="rb-score rb-score--bounce" data-score="p2">0</div>
+              <div class="rb-combo" data-combo="p2"></div>
+              <div class="rb-flow-badge" data-flow="p2" hidden>FLOW</div>
+            </div>
           </div>
-          <div class="rb-timer-wrap">
-            <div class="rb-timer" data-timer>1:30</div>
-            <div class="rb-phase" data-phase>Row Battle</div>
+          <div class="rb-tug" data-tug-wrap>
+            <div class="rb-tug-track">
+              <div class="rb-tug-fill rb-tug-fill--left"></div>
+              <div class="rb-tug-fill rb-tug-fill--right"></div>
+              <div class="rb-tug-knob" data-tug-knob></div>
+            </div>
           </div>
-          <div class="rb-player rb-player--right" data-panel="p2">
-            <div class="rb-score" data-score="p2">0</div>
-            <div class="rb-combo" data-combo="p2"></div>
-          </div>
+          <div class="rb-timer" data-timer>1:30</div>
+          <div class="rb-phase" data-phase>Row Battle</div>
+          <div class="rb-rush-label" data-rush hidden>FINAL !</div>
         </header>
         <main class="rb-main">
           <div class="rb-column rb-column--left" data-col="p1">
@@ -125,6 +142,8 @@ export class App {
     const overlay = this.root.querySelector<HTMLElement>("[data-video-fx]")!;
     this.particles = new ParticleField(canvas);
     this.videoFx = new VideoStageFx(rb, overlay!, rings!);
+    const camStage = this.root.querySelector<HTMLElement>("[data-cam-stage]")!;
+    this.cameraRig = new CameraRig(camStage);
 
     const resize = () => {
       this.particles?.resize();
@@ -174,6 +193,8 @@ export class App {
     const status = this.root.querySelector<HTMLElement>("[data-load-status]")!;
     status.textContent = "Autorisation caméra…";
     await this.sound.unlock();
+    const ctx = this.sound.getContext();
+    if (ctx) this.music = new MusicEngine(ctx);
 
     try {
       await startCamera(this.video);
@@ -212,8 +233,10 @@ export class App {
     this.game.onSnapshot((snap) => {
       this.updateHud(snap);
       this.checkComboChanges(snap);
+      this.checkFlowStates(snap);
       this.checkScorePopups(snap);
       this.updateVideoComboFx(snap);
+      this.updateCameraAndMusic(snap);
       if (snap.phase === "finished" && this.prevSnap?.phase === "playing") {
         this.onGameEnd(snap);
       }
@@ -225,6 +248,11 @@ export class App {
     this.multiposeTried = false;
     this.calibDone = { player1: false, player2: false };
     this.lastCombo = { player1: 0, player2: 0 };
+    this.lastComboTier = { player1: 1, player2: 1 };
+    this.wasInFlow = { player1: false, player2: false };
+    this.wasOverdrive = { player1: false, player2: false };
+    this.lastCountdownSec = -1;
+    this.music?.stop();
     this.lastPoints = { player1: 0, player2: 0 };
     this.vision?.setPlayerCount(this.playerCount);
     this.showScreen("calib");
@@ -250,6 +278,7 @@ export class App {
         this.showScreen("play");
         this.setPhaseText("C’est parti !");
         this.game.startPlaying();
+        this.music?.start();
       }
     }
     if (ev.type === "StrokeDetected" && this.game.getPhase() === "playing") {
@@ -267,16 +296,37 @@ export class App {
     const stats = player === "player1" ? snap.player1 : snap.player2;
     const mult = multiplierForCombo(stats.combo);
     this.sound.playStroke(mult);
+    if (stats.combo > 1) this.sound.playComboTick();
     this.flashPlayer(player, "hit", strength);
 
     const side = this.playerSide(player);
     this.videoFx?.punch(side, strength);
+    this.cameraRig?.pulseHit();
     this.particles?.streak(side);
 
     const { x, y } = this.effectCoords(player);
-    this.particles?.burst(x, y, strength * (mult >= 5 ? 1.8 : 1), side);
-    if (mult >= 10) this.particles?.flashScreen(1);
-    else if (mult >= 5) this.particles?.burst(x, y, 1.2, side);
+    const hue = player === "player1" ? 195 : 320;
+    const intensity = strength * (mult >= 5 ? 2 : mult >= 2 ? 1.4 : 1);
+    this.particles?.burst(x, y, intensity, side);
+    this.particles?.shockwave(x, y, hue);
+    if (stats.flow.overdrive) {
+      this.particles?.flashScreen(0.8);
+      this.particles?.burst(x, y, 2, side);
+    } else if (mult >= 10) {
+      this.particles?.flashScreen(1);
+    } else if (mult >= 5) {
+      this.particles?.burst(x, y, 1.5, side);
+    }
+
+    this.bounceScore(player);
+  }
+
+  private bounceScore(player: PlayerId): void {
+    const key = player === "player1" ? "p1" : "p2";
+    const el = this.root.querySelector<HTMLElement>(`[data-score="${key}"]`);
+    el?.classList.remove("rb-score--pop");
+    void el?.offsetWidth;
+    el?.classList.add("rb-score--pop");
   }
 
   private playerSide(player: PlayerId): "left" | "right" | "center" {
@@ -312,6 +362,32 @@ export class App {
     }
   }
 
+  private checkFlowStates(snap: GameSnapshot): void {
+    if (snap.phase !== "playing") return;
+    for (const player of activePlayers(this.playerCount)) {
+      const flow = player === "player1" ? snap.player1.flow : snap.player2.flow;
+      const key = player === "player1" ? "p1" : "p2";
+      const badge = this.root.querySelector<HTMLElement>(`[data-flow="${key}"]`);
+      if (badge) {
+        badge.hidden = !flow.inFlow;
+        badge.textContent = flow.overdrive ? "OVERDRIVE" : "FLOW";
+        badge.classList.toggle("rb-flow-badge--over", flow.overdrive);
+      }
+
+      if (flow.inFlow && !this.wasInFlow[player]) {
+        this.sound.playFlowEnter();
+      }
+      if (!flow.inFlow && this.wasInFlow[player] && flow.level < 0.35) {
+        this.sound.playFlowFade();
+      }
+      if (flow.overdrive && !this.wasOverdrive[player]) {
+        this.sound.playOverdrive();
+      }
+      this.wasInFlow[player] = flow.inFlow;
+      this.wasOverdrive[player] = flow.overdrive;
+    }
+  }
+
   private updateVideoComboFx(snap: GameSnapshot): void {
     if (snap.phase !== "playing") {
       this.videoFx?.setComboLevel(0);
@@ -322,20 +398,53 @@ export class App {
     const max = Math.max(c1, c2);
     const level = multiplierForCombo(max);
     this.videoFx?.setComboLevel(level);
+    const rb = this.root.querySelector<HTMLElement>("[data-rb]")!;
+    rb.classList.toggle("rb--rush", snap.finalRush);
+  }
+
+  private updateCameraAndMusic(snap: GameSnapshot): void {
+    if (snap.phase !== "playing") return;
+    const players = activePlayers(this.playerCount);
+    let maxFlow = 0;
+    let anyOd = false;
+    for (const p of players) {
+      const f = p === "player1" ? snap.player1.flow : snap.player2.flow;
+      maxFlow = Math.max(maxFlow, f.level);
+      anyOd = anyOd || f.overdrive;
+    }
+    this.cameraRig?.update(maxFlow, anyOd, snap.finalRush);
+
+    const { energy, finalRush } = this.game.getMusicEnergy();
+    this.music?.setEnergy(energy, finalRush);
+
+    const sec = Math.ceil(snap.timeLeftMs / 1000);
+    const rushEl = this.root.querySelector<HTMLElement>("[data-rush]");
+    if (rushEl) rushEl.hidden = !snap.finalRush;
+    if (snap.finalRush && sec !== this.lastCountdownSec && sec <= 10) {
+      this.sound.playCountdownTick(sec <= 3);
+      this.lastCountdownSec = sec;
+    }
   }
 
   private checkComboChanges(snap: GameSnapshot): void {
     for (const player of activePlayers(this.playerCount)) {
       const combo = player === "player1" ? snap.player1.combo : snap.player2.combo;
       const prev = this.lastCombo[player];
-      if (combo > prev && combo >= 3) {
-        const mult = multiplierForCombo(combo);
-        if ([2, 3, 5, 10].includes(mult)) this.sound.playComboUp();
+      const tier = multiplierForCombo(combo);
+      const prevTier = this.lastComboTier[player];
+      if (tier > prevTier && tier > 1) {
+        this.sound.playTierUp(tier);
+      }
+      if (combo > prev && combo >= 2) {
+        this.root.querySelector<HTMLElement>(
+          `[data-combo="${player === "player1" ? "p1" : "p2"}"]`,
+        )?.classList.add("rb-combo--bump");
       }
       if (combo === 0 && prev > 2) {
         this.sound.playComboBreak();
       }
       this.lastCombo[player] = combo;
+      this.lastComboTier[player] = tier;
     }
   }
 
@@ -352,19 +461,27 @@ export class App {
   private updateHud(snap: GameSnapshot): void {
     this.root.querySelector<HTMLElement>('[data-score="p1"]')!.textContent = String(snap.player1.score);
     this.root.querySelector<HTMLElement>('[data-score="p2"]')!.textContent = String(snap.player2.score);
-    this.root.querySelector<HTMLElement>('[data-combo="p1"]')!.textContent = comboLabel(snap.player1.combo);
-    this.root.querySelector<HTMLElement>('[data-combo="p2"]')!.textContent = comboLabel(snap.player2.combo);
+    const c1 = this.root.querySelector<HTMLElement>('[data-combo="p1"]')!;
+    const c2 = this.root.querySelector<HTMLElement>('[data-combo="p2"]')!;
+    c1.textContent = comboLabel(snap.player1.combo);
+    c2.textContent = comboLabel(snap.player2.combo);
 
     const e1 = this.root.querySelector<HTMLElement>('[data-energy="p1"]')!;
     const e2 = this.root.querySelector<HTMLElement>('[data-energy="p2"]')!;
     e1.style.height = `${snap.player1.energy * 100}%`;
     e2.style.height = `${snap.player2.energy * 100}%`;
 
+    const knob = this.root.querySelector<HTMLElement>("[data-tug-knob]");
+    if (knob) knob.style.left = `${snap.tugPercent}%`;
+    const tug = this.root.querySelector<HTMLElement>("[data-tug-wrap]");
+    if (tug) tug.hidden = this.playerCount === 1;
+
     const sec = Math.ceil(snap.timeLeftMs / 1000);
     const m = Math.floor(sec / 60);
     const s = sec % 60;
-    this.root.querySelector<HTMLElement>("[data-timer]")!.textContent =
-      `${m}:${s.toString().padStart(2, "0")}`;
+    const timerEl = this.root.querySelector<HTMLElement>("[data-timer]")!;
+    timerEl.textContent = `${m}:${s.toString().padStart(2, "0")}`;
+    timerEl.classList.toggle("rb-timer--rush", snap.finalRush);
   }
 
   private setPhaseText(text: string): void {
@@ -372,22 +489,28 @@ export class App {
   }
 
   private onGameEnd(snap: GameSnapshot): void {
-    this.sound.playVictory();
+    this.music?.stop();
     this.showScreen("end");
     if (this.playerCount === 1) {
+      this.sound.playVictory();
       this.root.querySelector<HTMLElement>("[data-winner]")!.textContent = "Partie terminée !";
       this.fillResult("p1", "Joueur", snap.player1, "player1");
       const p2card = this.root.querySelector<HTMLElement>('[data-result="p2"]')!;
       p2card.innerHTML = "";
       p2card.hidden = true;
     } else {
-      const winner =
-        snap.player1.score > snap.player2.score
-          ? "Joueur 1 gagne !"
-          : snap.player2.score > snap.player1.score
-            ? "Joueur 2 gagne !"
-            : "Égalité !";
+      const p1wins = snap.player1.score > snap.player2.score;
+      const p2wins = snap.player2.score > snap.player1.score;
+      const winner = p1wins
+        ? "Joueur 1 gagne !"
+        : p2wins
+          ? "Joueur 2 gagne !"
+          : "Égalité !";
       this.root.querySelector<HTMLElement>("[data-winner]")!.textContent = winner;
+      this.sound.playVictory();
+      if ((p1wins && !p2wins) || (p2wins && !p1wins)) {
+        setTimeout(() => this.sound.playDefeat(), 400);
+      }
       this.fillResult("p1", "Joueur 1", snap.player1, "player1");
       this.fillResult("p2", "Joueur 2", snap.player2, "player2");
       this.root.querySelector<HTMLElement>('[data-result="p2"]')!.hidden = false;
@@ -452,6 +575,7 @@ export class App {
 
   destroy(): void {
     cancelAnimationFrame(this.animHandle);
+    this.music?.stop();
     this.vision?.dispose();
     stopCamera(this.video);
     this.game.stop();

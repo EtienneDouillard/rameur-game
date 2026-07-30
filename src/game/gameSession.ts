@@ -1,8 +1,11 @@
 import type { GameEvent, PlayerId } from "../types/events";
 import type { PlayerCount } from "../types/gameMode";
 import { activePlayers } from "../types/gameMode";
+import { FlowController, type FlowSnapshot } from "./flowController";
+import { multiplierForCombo } from "./combo";
 
 const GAME_DURATION_MS = 90_000;
+const FINAL_RUSH_MS = 10_000;
 
 export interface PlayerStats {
   score: number;
@@ -12,6 +15,7 @@ export interface PlayerStats {
   regularStrokes: number;
   intervals: number[];
   energy: number;
+  flow: FlowSnapshot;
 }
 
 export interface GameSnapshot {
@@ -19,11 +23,14 @@ export interface GameSnapshot {
   phase: "idle" | "calibrating" | "playing" | "finished";
   player1: PlayerStats;
   player2: PlayerStats;
+  tugPercent: number;
+  finalRush: boolean;
 }
 
 type SnapshotListener = (snap: GameSnapshot) => void;
 
 function emptyStats(): PlayerStats {
+  const flow = { level: 0, inFlow: false, overdrive: false };
   return {
     score: 0,
     combo: 0,
@@ -32,6 +39,7 @@ function emptyStats(): PlayerStats {
     regularStrokes: 0,
     intervals: [],
     energy: 0.35,
+    flow,
   };
 }
 
@@ -46,6 +54,9 @@ export class GameSession {
   private playStart = 0;
   private snapshotListeners = new Set<SnapshotListener>();
   private raf = 0;
+  private playerCount: PlayerCount = 2;
+  private flow = new FlowController();
+  private lastTick = 0;
 
   onSnapshot(listener: SnapshotListener): () => void {
     this.snapshotListeners.add(listener);
@@ -61,10 +72,9 @@ export class GameSession {
     this.stats.player1 = emptyStats();
     this.stats.player2 = emptyStats();
     this.playerCount = playerCount;
+    this.flow.reset();
     this.broadcast();
   }
-
-  private playerCount: PlayerCount = 2;
 
   onGameEvent(event: GameEvent): void {
     if (event.type === "CalibrationDone") {
@@ -82,14 +92,14 @@ export class GameSession {
       case "ComboLost":
         if (this.playerCount === 2 || event.player === "player1") {
           this.stats[event.player].combo = 0;
+          this.flow.onComboBreak(event.player);
           this.stats[event.player].energy = Math.max(
             0.15,
             this.stats[event.player].energy - 0.25,
           );
+          this.syncFlowStats();
           this.broadcast();
         }
-        break;
-      case "CalibrationProgress":
         break;
       default:
         break;
@@ -99,21 +109,29 @@ export class GameSession {
   startPlaying(): void {
     this.phase = "playing";
     this.playStart = performance.now();
+    this.lastTick = this.playStart;
     this.tick();
   }
 
   private tick = (): void => {
     if (this.phase !== "playing") return;
-    const elapsed = performance.now() - this.playStart;
+    const now = performance.now();
+    const dt = (now - this.lastTick) / 1000;
+    this.lastTick = now;
+
+    const elapsed = now - this.playStart;
     if (elapsed >= GAME_DURATION_MS) {
       this.phase = "finished";
       this.broadcast();
       return;
     }
+
+    this.flow.tick(dt);
     for (const id of activePlayers(this.playerCount)) {
       const s = this.stats[id];
       s.energy = Math.max(0.1, s.energy - 0.0008);
     }
+    this.syncFlowStats();
     this.broadcast();
     this.raf = requestAnimationFrame(this.tick);
   };
@@ -147,11 +165,32 @@ export class GameSession {
     this.lastStrokeAt[player] = at;
 
     const mult = multiplierForCombo(s.combo);
-    const points = Math.round(100 * strength * mult);
+    const flowMult = this.flow.onStroke(player, regular, s.combo);
+    const points = Math.round(100 * strength * mult * flowMult);
     s.score += points;
     s.energy = Math.min(1, s.energy + 0.12 + strength * 0.15);
+    this.syncFlowStats();
 
     this.broadcast();
+  }
+
+  private syncFlowStats(): void {
+    for (const id of ["player1", "player2"] as const) {
+      this.stats[id].flow = this.flow.getSnapshot(id, this.stats[id].combo);
+    }
+  }
+
+  getMusicEnergy(): { energy: number; finalRush: boolean } {
+    const snap = this.getSnapshot();
+    if (snap.phase !== "playing") return { energy: 0.1, finalRush: false };
+    const combos = { player1: snap.player1.combo, player2: snap.player2.combo };
+    const energy = this.flow.matchEnergy(activePlayers(this.playerCount), combos);
+    const comboBoost =
+      Math.max(multiplierForCombo(combos.player1), multiplierForCombo(combos.player2)) / 10;
+    return {
+      energy: Math.min(1, energy + comboBoost + (snap.finalRush ? 0.25 : 0)),
+      finalRush: snap.finalRush,
+    };
   }
 
   private broadcast(): void {
@@ -163,11 +202,20 @@ export class GameSession {
     const elapsed =
       this.phase === "playing" ? performance.now() - this.playStart : GAME_DURATION_MS;
     const timeLeftMs = Math.max(0, GAME_DURATION_MS - elapsed);
+    const finalRush = timeLeftMs <= FINAL_RUSH_MS && this.phase === "playing";
+
+    const s1 = this.stats.player1.score;
+    const s2 = this.stats.player2.score;
+    const total = s1 + s2 + 1;
+    const tugPercent = this.playerCount === 1 ? 50 : 15 + (70 * s1) / total;
+
     return {
       timeLeftMs,
       phase: this.phase,
-      player1: { ...this.stats.player1 },
-      player2: { ...this.stats.player2 },
+      player1: { ...this.stats.player1, flow: { ...this.stats.player1.flow } },
+      player2: { ...this.stats.player2, flow: { ...this.stats.player2.flow } },
+      tugPercent,
+      finalRush,
     };
   }
 
@@ -187,15 +235,4 @@ export class GameSession {
   }
 }
 
-export function multiplierForCombo(combo: number): number {
-  if (combo >= 10) return 10;
-  if (combo >= 7) return 5;
-  if (combo >= 5) return 3;
-  if (combo >= 3) return 2;
-  return 1;
-}
-
-export function comboLabel(combo: number): string {
-  const m = multiplierForCombo(combo);
-  return m > 1 ? `×${m}` : "";
-}
+export { multiplierForCombo, comboLabel } from "./combo";

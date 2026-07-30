@@ -32,7 +32,7 @@ Documentation : [`docs/ARCHITECTURE-TECHNIQUE.md`](docs/ARCHITECTURE-TECHNIQUE.m
 
 ## Règles (résumé)
 
-- **90 secondes**, 2 joueurs (gauche / droite dans le champ caméra).
+README.md
 - Score basé sur régularité et **combo** (×1 → ×10).
 - Rythme irrégulier : combo à zéro.
 - Calibration automatique **5 s** au début de chaque partie.

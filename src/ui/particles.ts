@@ -24,6 +24,7 @@ export class ParticleField {
   private ctx: CanvasRenderingContext2D;
   private particles: Particle[] = [];
   private floatTexts: FloatText[] = [];
+  private shockwaves: { x: number; y: number; r: number; life: number; hue: number }[] = [];
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
@@ -80,6 +81,10 @@ export class ParticleField {
     }
   }
 
+  shockwave(x: number, y: number, hue: number): void {
+    this.shockwaves.push({ x, y, r: 8, life: 1, hue });
+  }
+
   scorePopup(x: number, y: number, text: string, hue: number): void {
     this.floatTexts.push({ x, y, vy: -55, life: 1, text, hue, scale: 1 });
   }
@@ -125,6 +130,18 @@ export class ParticleField {
       this.ctx.restore();
     }
     this.floatTexts = this.floatTexts.filter((t) => t.life > 0);
+
+    for (const sw of this.shockwaves) {
+      sw.life -= dt * 2.2;
+      sw.r += dt * 280;
+      if (sw.life <= 0) continue;
+      this.ctx.strokeStyle = `hsla(${sw.hue}, 100%, 70%, ${sw.life * 0.85})`;
+      this.ctx.lineWidth = 4 + (1 - sw.life) * 6;
+      this.ctx.beginPath();
+      this.ctx.arc(sw.x, sw.y, sw.r, 0, Math.PI * 2);
+      this.ctx.stroke();
+    }
+    this.shockwaves = this.shockwaves.filter((s) => s.life > 0);
 
     for (const p of this.particles) {
       p.life -= dt / p.maxLife;
