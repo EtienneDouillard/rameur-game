@@ -6,6 +6,28 @@ import { ROI_LEFT, ROI_RIGHT, ROI_SOLO } from "../types/gameMode";
 
 export type PoseFrameCallback = (frames: PlayerPoseFrame[]) => void;
 
+/** Au-delà, la pose mémorisée est périmée (le joueur a quitté le cadre) */
+const STALE_POSE_MS = 1200;
+/** Points fiables minimum pour accepter une pose (évite les fantômes sur fond vide) */
+const MIN_STRONG_KEYPOINTS = 6;
+const STRONG_SCORE = 0.3;
+
+/** Une vraie personne montre un torse : sinon c'est du bruit de fond. */
+function strongKeypoints(keypoints: poseDetection.Keypoint[]): poseDetection.Keypoint[] {
+  const strong = keypoints.filter((k) => (k.score ?? 0) >= STRONG_SCORE);
+  if (strong.length < MIN_STRONG_KEYPOINTS) return [];
+  const hasTorso = strong.some(
+    (k) => k.name === "left_shoulder" || k.name === "right_shoulder",
+  );
+  return hasTorso ? strong : [];
+}
+
+interface RoiResult {
+  landmarks: PoseLandmark[];
+  /** Centre horizontal de la pose dans l'image affichée (0 = bord gauche) */
+  centerX: number;
+}
+
 export class PoseVision {
   private detector: poseDetection.PoseDetector | null = null;
   private multipose = false;
@@ -22,8 +44,11 @@ export class PoseVision {
     player1: [],
     player2: [],
   };
+  private lastSeenAt: Record<PlayerId, number> = { player1: 0, player2: 0 };
+  private lastCenterX: Record<PlayerId, number> = { player1: -1, player2: -1 };
   private busy = false;
-  private flipHorizontal = false;
+  /** La vidéo est affichée en miroir (option « Retourner la vidéo ») */
+  private mirrored = false;
 
   constructor(video: HTMLVideoElement, onFrame: PoseFrameCallback) {
     this.video = video;
@@ -38,37 +63,29 @@ export class PoseVision {
     return this.backend;
   }
 
+  /** Position écran du joueur détecté, -1 si absent (diagnostic ?debug=1) */
+  getCenterX(player: PlayerId): number {
+    return this.lastCenterX[player];
+  }
+
+  isMirrored(): boolean {
+    return this.mirrored;
+  }
+
   setPlayerCount(count: PlayerCount): void {
     this.playerCount = count;
   }
 
-  /** Aligné sur l’option « retourner la vidéo » (miroir d’affichage) */
-  setFlipHorizontal(on: boolean): void {
-    if (this.flipHorizontal === on) return;
-    this.flipHorizontal = on;
-    // Évite d’attribuer l’ancienne pose au mauvais côté juste après un bascule.
-    this.lastLandmarks = { player1: [], player2: [] };
-  }
-
   /**
-   * Côté ÉCRAN : player1 = bâbord (gauche), player2 = tribord (droite).
-   * Avec miroir CSS, la gauche du canvas brut apparaît à droite de l’écran —
-   * on inverse donc le mapping ROI → joueur.
+   * Doit suivre l'option d'affichage. L'image analysée est retournée comme
+   * la vidéo à l'écran : la moitié gauche du canvas est donc toujours la
+   * moitié gauche vue par les joueurs, miroir ou non.
    */
-  private screenSideRois(): {
-    left: { player: PlayerId; roi: typeof ROI_LEFT };
-    right: { player: PlayerId; roi: typeof ROI_RIGHT };
-  } {
-    if (this.flipHorizontal) {
-      return {
-        left: { player: "player1", roi: ROI_RIGHT },
-        right: { player: "player2", roi: ROI_LEFT },
-      };
-    }
-    return {
-      left: { player: "player1", roi: ROI_LEFT },
-      right: { player: "player2", roi: ROI_RIGHT },
-    };
+  setFlipHorizontal(on: boolean): void {
+    if (this.mirrored === on) return;
+    this.mirrored = on;
+    this.lastLandmarks = { player1: [], player2: [] };
+    this.lastSeenAt = { player1: 0, player2: 0 };
   }
 
   async init(): Promise<void> {
@@ -151,58 +168,55 @@ export class PoseVision {
     }
     const ctx = this.fullCanvas.getContext("2d", { willReadFrequently: true });
     if (!ctx) return;
-    ctx.drawImage(this.video, 0, 0, vw, vh);
 
-    const frames: PlayerPoseFrame[] = [];
+    // Le canvas reproduit exactement ce que voient les joueurs.
+    ctx.save();
+    if (this.mirrored) {
+      ctx.translate(vw, 0);
+      ctx.scale(-1, 1);
+    }
+    ctx.drawImage(this.video, 0, 0, vw, vh);
+    ctx.restore();
 
     if (this.multipose) {
       const poses = await detector.estimatePoses(this.fullCanvas, {
-        flipHorizontal: this.flipHorizontal,
+        flipHorizontal: false,
         maxPoses: this.playerCount,
       });
-      const assigned = assignMultipose(
-        poses,
-        vw,
-        vh,
-        this.playerCount,
-        this.flipHorizontal,
-      );
-      for (const [player, landmarks] of assigned) {
+      for (const [player, landmarks] of this.assignMultipose(poses, vw, vh)) {
         if (landmarks.length) {
           this.lastLandmarks[player] = landmarks;
-          frames.push({ player, landmarks, timestamp });
-        } else if (this.lastLandmarks[player].length) {
-          frames.push({ player, landmarks: this.lastLandmarks[player], timestamp });
+          this.lastSeenAt[player] = timestamp;
         }
       }
     } else if (this.playerCount === 1) {
-      const landmarks = await this.estimateRoi(ctx, vw, vh, ROI_SOLO, detector);
-      if (landmarks.length) this.lastLandmarks.player1 = landmarks;
-      if (this.lastLandmarks.player1.length) {
-        frames.push({
-          player: "player1",
-          landmarks: landmarks.length ? landmarks : this.lastLandmarks.player1,
-          timestamp,
-        });
+      const res = await this.estimateRoi(ctx, vw, vh, ROI_SOLO, detector);
+      if (res) {
+        this.lastLandmarks.player1 = res.landmarks;
+        this.lastSeenAt.player1 = timestamp;
       }
     } else {
-      // Alternate ROI : 1 joueur par frame → ~2× FPS effectif par joueur
-      // Mapping selon le côté ÉCRAN (miroir ou non).
+      // Alternance gauche / droite : ~2× FPS effectif par joueur.
       this.dualToggle = 1 - this.dualToggle;
-      const sides = this.screenSideRois();
-      const active =
-        this.dualToggle === 0 ? sides.left : sides.right;
-
-      const landmarks = await this.estimateRoi(ctx, vw, vh, active.roi, detector);
-      if (landmarks.length) this.lastLandmarks[active.player] = landmarks;
-
-      for (const player of ["player1", "player2"] as const) {
-        const lm =
-          player === active.player && landmarks.length
-            ? landmarks
-            : this.lastLandmarks[player];
-        if (lm.length) frames.push({ player, landmarks: lm, timestamp });
+      const roi = this.dualToggle === 0 ? ROI_LEFT : ROI_RIGHT;
+      const res = await this.estimateRoi(ctx, vw, vh, roi, detector);
+      if (res) {
+        // Le joueur vient de la position réelle dans l'image affichée :
+        // moitié gauche = bâbord (HUD gauche), moitié droite = tribord.
+        const player: PlayerId = res.centerX < 0.5 ? "player1" : "player2";
+        this.lastLandmarks[player] = res.landmarks;
+        this.lastSeenAt[player] = timestamp;
+        this.lastCenterX[player] = res.centerX;
       }
+    }
+
+    const frames: PlayerPoseFrame[] = [];
+    for (const player of ["player1", "player2"] as const) {
+      if (this.playerCount === 1 && player === "player2") continue;
+      const lm = this.lastLandmarks[player];
+      if (!lm.length) continue;
+      if (timestamp - this.lastSeenAt[player] > STALE_POSE_MS) continue;
+      frames.push({ player, landmarks: lm, timestamp });
     }
 
     if (frames.length) this.onFrame(frames);
@@ -214,77 +228,74 @@ export class PoseVision {
     vh: number,
     roi: { x0: number; x1: number },
     detector: poseDetection.PoseDetector,
-  ): Promise<PoseLandmark[]> {
+  ): Promise<RoiResult | null> {
     const sx = Math.floor(roi.x0 * vw);
     const sw = Math.max(1, Math.floor((roi.x1 - roi.x0) * vw));
     const cropCtx = this.cropCanvas.getContext("2d");
-    if (!cropCtx) return [];
+    if (!cropCtx) return null;
 
     cropCtx.drawImage(srcCtx.canvas, sx, 0, sw, vh, 0, 0, 192, 192);
 
     const poses = await detector.estimatePoses(this.cropCanvas, {
-      flipHorizontal: this.flipHorizontal,
+      flipHorizontal: false,
     });
     const pose = poses[0];
-    if (!pose?.keypoints) return [];
+    if (!pose?.keypoints) return null;
 
-    // Rejeter les poses trop peu fiables (bruit / fond)
-    const avgScore =
-      pose.keypoints.reduce((s, k) => s + (k.score ?? 0), 0) / pose.keypoints.length;
-    if (avgScore < 0.1) return [];
+    const strong = strongKeypoints(pose.keypoints);
+    if (!strong.length) return null;
 
-    return pose.keypoints.map((kp) => ({
-      x: kp.x / 192,
-      y: kp.y / 192,
+    const meanX = strong.reduce((s, k) => s + (k.x ?? 0), 0) / strong.length / 192;
+
+    return {
+      landmarks: pose.keypoints.map((kp) => ({
+        x: kp.x / 192,
+        y: kp.y / 192,
+        score: kp.score ?? 0,
+        name: kp.name,
+      })),
+      centerX: (sx + meanX * sw) / vw,
+    };
+  }
+
+  private assignMultipose(
+    poses: poseDetection.Pose[],
+    frameWidth: number,
+    frameHeight: number,
+  ): Map<PlayerId, PoseLandmark[]> {
+    const result = new Map<PlayerId, PoseLandmark[]>([
+      ["player1", []],
+      ["player2", []],
+    ]);
+
+    const scored = poses
+      .map((p) => {
+        const kps = p.keypoints ?? [];
+        const strong = strongKeypoints(kps);
+        if (!strong.length) return null;
+        const cx = strong.reduce((s, k) => s + (k.x ?? 0), 0) / strong.length;
+        return { kps, centerX: cx / frameWidth };
+      })
+      .filter((x): x is NonNullable<typeof x> => x !== null)
+      .sort((a, b) => a.centerX - b.centerX);
+
+    const norm = (kp: poseDetection.Keypoint): PoseLandmark => ({
+      x: (kp.x ?? 0) / frameWidth,
+      y: (kp.y ?? 0) / frameHeight,
       score: kp.score ?? 0,
       name: kp.name,
-    }));
-  }
-}
+    });
 
-function assignMultipose(
-  poses: poseDetection.Pose[],
-  frameWidth: number,
-  frameHeight: number,
-  playerCount: PlayerCount,
-  _flipHorizontal: boolean,
-): Map<PlayerId, PoseLandmark[]> {
-  const result = new Map<PlayerId, PoseLandmark[]>([
-    ["player1", []],
-    ["player2", []],
-  ]);
-
-  // Avec flipHorizontal aligné sur le miroir CSS, les x TF sont déjà
-  // en coordonnées écran (gauche = petit x). Tri croissant = bâbord → tribord.
-  const scored = poses
-    .map((p) => {
-      const kps = p.keypoints ?? [];
-      const valid = kps.filter((k) => (k.score ?? 0) > 0.15);
-      if (!valid.length) return null;
-      const cx = valid.reduce((s, k) => s + (k.x ?? 0), 0) / valid.length;
-      return { kps, screenX: cx / frameWidth };
-    })
-    .filter((x): x is NonNullable<typeof x> => x !== null)
-    .sort((a, b) => a.screenX - b.screenX);
-
-  const norm = (kp: poseDetection.Keypoint): PoseLandmark => ({
-    x: (kp.x ?? 0) / frameWidth,
-    y: (kp.y ?? 0) / frameHeight,
-    score: kp.score ?? 0,
-    name: kp.name,
-  });
-
-  if (scored.length >= 1) {
-    result.set("player1", scored[0].kps.map(norm));
-  }
-  if (playerCount === 2 && scored.length >= 2) {
-    result.set("player2", scored[1].kps.map(norm));
-  } else if (playerCount === 2 && scored.length === 1) {
-    if (scored[0].screenX > 0.55) {
-      result.set("player1", []);
-      result.set("player2", scored[0].kps.map(norm));
+    if (this.playerCount === 1) {
+      if (scored.length) result.set("player1", scored[0].kps.map(norm));
+      return result;
     }
-  }
 
-  return result;
+    const left = scored.filter((s) => s.centerX < 0.5);
+    const right = scored.filter((s) => s.centerX >= 0.5);
+    if (left.length) result.set("player1", left[0].kps.map(norm));
+    if (right.length) result.set("player2", right[right.length - 1].kps.map(norm));
+
+    return result;
+  }
 }
