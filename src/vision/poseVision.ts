@@ -1,7 +1,6 @@
 import * as poseDetection from "@tensorflow-models/pose-detection";
 import type { PlayerId, PlayerPoseFrame, PoseLandmark } from "../types/events";
 import { initTfBackend } from "./backends";
-
 import type { PlayerCount } from "../types/gameMode";
 import { ROI_LEFT, ROI_RIGHT, ROI_SOLO } from "../types/gameMode";
 
@@ -17,6 +16,13 @@ export class PoseVision {
   private onFrame: PoseFrameCallback;
   private backend = "";
   private playerCount: PlayerCount = 2;
+  /** En dual-ROI, alterne les joueurs pour doubler le FPS par joueur */
+  private dualToggle = 0;
+  private lastLandmarks: Record<PlayerId, PoseLandmark[]> = {
+    player1: [],
+    player2: [],
+  };
+  private busy = false;
 
   constructor(video: HTMLVideoElement, onFrame: PoseFrameCallback) {
     this.video = video;
@@ -90,18 +96,29 @@ export class PoseVision {
       return;
     }
 
+    if (this.busy) {
+      requestAnimationFrame(this.loop);
+      return;
+    }
+
     const now = performance.now();
-    void this.processFrame(vw, vh, now).finally(() => {
-      if (this.running) requestAnimationFrame(this.loop);
-    });
+    this.busy = true;
+    void this.processFrame(vw, vh, now)
+      .catch(() => {})
+      .finally(() => {
+        this.busy = false;
+        if (this.running) requestAnimationFrame(this.loop);
+      });
   };
 
   private async processFrame(vw: number, vh: number, timestamp: number): Promise<void> {
     const detector = this.detector;
     if (!detector) return;
 
-    this.fullCanvas.width = vw;
-    this.fullCanvas.height = vh;
+    if (this.fullCanvas.width !== vw || this.fullCanvas.height !== vh) {
+      this.fullCanvas.width = vw;
+      this.fullCanvas.height = vh;
+    }
     const ctx = this.fullCanvas.getContext("2d", { willReadFrequently: true });
     if (!ctx) return;
     ctx.drawImage(this.video, 0, 0, vw, vh);
@@ -109,22 +126,46 @@ export class PoseVision {
     const frames: PlayerPoseFrame[] = [];
 
     if (this.multipose) {
-      const poses = await detector.estimatePoses(this.fullCanvas, { flipHorizontal: true });
+      const poses = await detector.estimatePoses(this.fullCanvas, {
+        flipHorizontal: true,
+        maxPoses: this.playerCount,
+      });
       const assigned = assignMultipose(poses, vw, vh, this.playerCount);
       for (const [player, landmarks] of assigned) {
-        if (landmarks.length) frames.push({ player, landmarks, timestamp });
+        if (landmarks.length) {
+          this.lastLandmarks[player] = landmarks;
+          frames.push({ player, landmarks, timestamp });
+        } else if (this.lastLandmarks[player].length) {
+          frames.push({ player, landmarks: this.lastLandmarks[player], timestamp });
+        }
+      }
+    } else if (this.playerCount === 1) {
+      const landmarks = await this.estimateRoi(ctx, vw, vh, ROI_SOLO, detector);
+      if (landmarks.length) this.lastLandmarks.player1 = landmarks;
+      if (this.lastLandmarks.player1.length) {
+        frames.push({
+          player: "player1",
+          landmarks: landmarks.length ? landmarks : this.lastLandmarks.player1,
+          timestamp,
+        });
       }
     } else {
-      const rois: { player: PlayerId; roi: { x0: number; x1: number } }[] =
-        this.playerCount === 1
-          ? [{ player: "player1", roi: ROI_SOLO }]
-          : [
-              { player: "player1", roi: ROI_LEFT },
-              { player: "player2", roi: ROI_RIGHT },
-            ];
-      for (const { player, roi } of rois) {
-        const landmarks = await this.estimateRoi(ctx, vw, vh, roi, detector);
-        frames.push({ player, landmarks, timestamp });
+      // Alternate ROI : 1 joueur par frame → ~2× FPS effectif par joueur
+      this.dualToggle = 1 - this.dualToggle;
+      const active: { player: PlayerId; roi: typeof ROI_LEFT } =
+        this.dualToggle === 0
+          ? { player: "player1", roi: ROI_LEFT }
+          : { player: "player2", roi: ROI_RIGHT };
+
+      const landmarks = await this.estimateRoi(ctx, vw, vh, active.roi, detector);
+      if (landmarks.length) this.lastLandmarks[active.player] = landmarks;
+
+      for (const player of ["player1", "player2"] as const) {
+        const lm =
+          player === active.player && landmarks.length
+            ? landmarks
+            : this.lastLandmarks[player];
+        if (lm.length) frames.push({ player, landmarks: lm, timestamp });
       }
     }
 
@@ -139,7 +180,7 @@ export class PoseVision {
     detector: poseDetection.PoseDetector,
   ): Promise<PoseLandmark[]> {
     const sx = Math.floor(roi.x0 * vw);
-    const sw = Math.floor((roi.x1 - roi.x0) * vw);
+    const sw = Math.max(1, Math.floor((roi.x1 - roi.x0) * vw));
     const cropCtx = this.cropCanvas.getContext("2d");
     if (!cropCtx) return [];
 
@@ -148,6 +189,11 @@ export class PoseVision {
     const poses = await detector.estimatePoses(this.cropCanvas, { flipHorizontal: true });
     const pose = poses[0];
     if (!pose?.keypoints) return [];
+
+    // Rejeter les poses trop peu fiables (bruit / fond)
+    const avgScore =
+      pose.keypoints.reduce((s, k) => s + (k.score ?? 0), 0) / pose.keypoints.length;
+    if (avgScore < 0.12) return [];
 
     return pose.keypoints.map((kp) => ({
       x: kp.x / 192,
@@ -172,7 +218,7 @@ function assignMultipose(
   const scored = poses
     .map((p) => {
       const kps = p.keypoints ?? [];
-      const valid = kps.filter((k) => (k.score ?? 0) > 0.2);
+      const valid = kps.filter((k) => (k.score ?? 0) > 0.15);
       if (!valid.length) return null;
       const cx = valid.reduce((s, k) => s + (k.x ?? 0), 0) / valid.length;
       return { kps, normX: cx / frameWidth };
@@ -192,6 +238,12 @@ function assignMultipose(
   }
   if (playerCount === 2 && scored.length >= 2) {
     result.set("player2", scored[1].kps.map(norm));
+  } else if (playerCount === 2 && scored.length === 1) {
+    // Une seule pose : assigner selon position gauche/droite
+    if (scored[0].normX > 0.55) {
+      result.set("player1", []);
+      result.set("player2", scored[0].kps.map(norm));
+    }
   }
 
   return result;

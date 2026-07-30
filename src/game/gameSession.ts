@@ -159,8 +159,8 @@ export class GameSession {
       const dt = at - last;
       s.intervals.push(dt);
       const period = this.expectedPeriod[player];
-      const lo = period * 0.78;
-      const hi = period * 1.22;
+      const lo = period * 0.72;
+      const hi = period * 1.28;
       regular = dt >= lo && dt <= hi;
       if (regular) {
         s.combo = Math.min(s.combo + 1, 12);

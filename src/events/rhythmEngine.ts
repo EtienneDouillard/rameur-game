@@ -10,18 +10,33 @@ import { extractFeatures } from "./features";
 import { OneEuroFilter } from "./oneEuro";
 
 const CALIBRATION_MS = 5000;
+/** Garder le dernier drive valide si la pose flicker (ms) */
+const HOLD_VALID_MS = 180;
+/** Refractory min/max pour éviter doubles coups sans rater le suivant */
+const REFRACTORY_MIN_MS = 280;
+const REFRACTORY_MAX_MS = 700;
+const REFRACTORY_RATIO = 0.28;
 
 interface PlayerState {
   filter: OneEuroFilter;
+  velFilter: OneEuroFilter;
   prevDrive: number;
-  phase: "high" | "low";
+  prevTime: number;
+  /** rising | falling cycle */
+  phase: "rising" | "falling";
+  cyclePeak: number;
+  cycleTrough: number;
   lastStrokeAt: number;
   strokeIntervals: number[];
   calibSamples: number[];
-  calibPeaks: number[];
+  calibPeakVel: number[];
   profile: PlayerRhythmProfile | null;
   active: boolean;
   refractoryUntil: number;
+  lastValidDrive: number;
+  lastValidAt: number;
+  /** Velocité filtrée (unités / s) */
+  velocity: number;
 }
 
 export class RhythmEngine {
@@ -40,16 +55,23 @@ export class RhythmEngine {
 
   private newPlayerState(): PlayerState {
     return {
-      filter: new OneEuroFilter(1.4, 0.05),
+      filter: new OneEuroFilter(2.2, 0.04, 1.2),
+      velFilter: new OneEuroFilter(1.8, 0.08, 1),
       prevDrive: 0,
-      phase: "low",
+      prevTime: 0,
+      phase: "rising",
+      cyclePeak: -Infinity,
+      cycleTrough: Infinity,
       lastStrokeAt: 0,
       strokeIntervals: [],
       calibSamples: [],
-      calibPeaks: [],
+      calibPeakVel: [],
       profile: null,
       active: false,
       refractoryUntil: 0,
+      lastValidDrive: 0,
+      lastValidAt: 0,
+      velocity: 0,
     };
   }
 
@@ -69,12 +91,19 @@ export class RhythmEngine {
     for (const id of ["player1", "player2"] as const) {
       const p = this.players[id];
       p.filter.reset();
+      p.velFilter.reset();
       p.calibSamples = [];
-      p.calibPeaks = [];
+      p.calibPeakVel = [];
       p.profile = null;
       p.strokeIntervals = [];
-      p.phase = "low";
+      p.phase = "rising";
+      p.cyclePeak = -Infinity;
+      p.cycleTrough = Infinity;
       p.active = false;
+      p.prevTime = 0;
+      p.lastValidAt = 0;
+      p.refractoryUntil = 0;
+      p.lastStrokeAt = 0;
     }
   }
 
@@ -89,15 +118,32 @@ export class RhythmEngine {
       if (!this.enabled.includes(frame.player)) continue;
       const p = this.players[frame.player];
       const feat = extractFeatures(frame.landmarks);
-      if (!feat.valid) continue;
 
-      const drive = p.filter.filter(feat.drive, frame.timestamp);
-      const velocity = drive - p.prevDrive;
+      let rawDrive: number | null = null;
+      if (feat.valid && feat.confidence >= 0.25) {
+        rawDrive = feat.drive;
+        p.lastValidDrive = feat.drive;
+        p.lastValidAt = frame.timestamp;
+      } else if (frame.timestamp - p.lastValidAt < HOLD_VALID_MS && p.lastValidAt > 0) {
+        rawDrive = p.lastValidDrive;
+      }
+
+      if (rawDrive === null) continue;
+
+      const drive = p.filter.filter(rawDrive, frame.timestamp);
+
+      let dtSec = 1 / 30;
+      if (p.prevTime > 0) {
+        dtSec = Math.max(1 / 60, Math.min(0.12, (frame.timestamp - p.prevTime) / 1000));
+      }
+      const rawVel = (drive - p.prevDrive) / dtSec;
+      p.velocity = p.velFilter.filter(rawVel, frame.timestamp);
       p.prevDrive = drive;
+      p.prevTime = frame.timestamp;
 
       if (this.calibrating) {
         p.calibSamples.push(drive);
-        this.detectStrokeCalibration(p, drive, velocity, now, frame.player);
+        this.detectStroke(p, drive, now, frame.player, true);
         const progress = Math.min(1, (now - this.calibStart) / CALIBRATION_MS);
         this.emit({ type: "CalibrationProgress", player: frame.player, progress });
         continue;
@@ -105,12 +151,12 @@ export class RhythmEngine {
 
       if (!p.profile) continue;
 
-      if (!p.active && Math.abs(velocity) > 0.008) {
+      if (!p.active && Math.abs(p.velocity) > p.profile.thresholds.idle) {
         p.active = true;
         this.emit({ type: "PlayerActive", player: frame.player, at: now });
       }
 
-      this.detectStrokeGameplay(p, drive, velocity, now, frame.player);
+      this.detectStroke(p, drive, now, frame.player, false);
     }
 
     if (this.calibrating && now - this.calibStart >= CALIBRATION_MS) {
@@ -118,33 +164,118 @@ export class RhythmEngine {
     }
   }
 
-  private detectStrokeCalibration(
+  /**
+   * Détection par croisement de pic (rising → falling).
+   * Velocité en unités/seconde (indépendante du FPS).
+   */
+  private detectStroke(
     p: PlayerState,
     drive: number,
-    velocity: number,
     now: number,
     player: PlayerId,
+    isCalib: boolean,
   ): void {
-    if (now < p.refractoryUntil) return;
+    const vUp = isCalib
+      ? 0.18
+      : Math.max(0.12, p.profile!.thresholds.stroke);
+    const vDown = isCalib
+      ? -0.14
+      : -Math.max(0.1, p.profile!.thresholds.stroke * 0.75);
+    const minAmp = isCalib
+      ? 0.035
+      : Math.max(0.025, p.profile!.amplitudeNorm * 0.28);
 
-    if (p.phase === "low" && velocity > 0.012 && drive > 0.35) {
-      p.phase = "high";
-    }
-    if (p.phase === "high" && velocity < -0.01) {
-      p.phase = "low";
-      p.calibPeaks.push(drive);
-      p.refractoryUntil = now + 180;
-      if (p.lastStrokeAt > 0) {
-        p.strokeIntervals.push(now - p.lastStrokeAt);
+    if (p.phase === "rising") {
+      p.cyclePeak = Math.max(p.cyclePeak, drive);
+      p.cycleTrough = Math.min(p.cycleTrough, drive);
+
+      // Pic : vitesse devient négative après une montée suffisante
+      if (
+        now >= p.refractoryUntil &&
+        p.velocity < vDown &&
+        p.cyclePeak - p.cycleTrough >= minAmp * 0.5 &&
+        p.cyclePeak - drive >= minAmp * 0.35
+      ) {
+        this.fireStroke(p, drive, now, player, isCalib);
+        p.phase = "falling";
+        p.cycleTrough = drive;
+        return;
       }
-      p.lastStrokeAt = now;
-      this.emit({
-        type: "StrokeDetected",
-        player,
-        strength: Math.min(1, drive),
-        at: now,
-      });
+
+      // Alternative : grosse vélocité négative même si pic partiel (mouvement rapide)
+      if (
+        now >= p.refractoryUntil &&
+        p.velocity < vDown * 1.6 &&
+        p.cyclePeak > -Infinity &&
+        p.cyclePeak - drive >= minAmp * 0.22
+      ) {
+        this.fireStroke(p, drive, now, player, isCalib);
+        p.phase = "falling";
+        p.cycleTrough = drive;
+      }
+    } else {
+      // falling : attendre la remontée pour le prochain cycle
+      p.cycleTrough = Math.min(p.cycleTrough, drive);
+      if (p.velocity > vUp * 0.55) {
+        p.phase = "rising";
+        p.cyclePeak = drive;
+        p.cycleTrough = drive;
+      }
     }
+
+    if (
+      !isCalib &&
+      p.profile &&
+      p.active &&
+      p.lastStrokeAt > 0 &&
+      now - p.lastStrokeAt > p.profile.periodMs * 2.6
+    ) {
+      p.active = false;
+      this.emit({ type: "PlayerIdle", player, at: now });
+      this.emit({ type: "ComboLost", player, at: now });
+      p.phase = "rising";
+      p.cyclePeak = drive;
+      p.cycleTrough = drive;
+    }
+  }
+
+  private fireStroke(
+    p: PlayerState,
+    _drive: number,
+    now: number,
+    player: PlayerId,
+    isCalib: boolean,
+  ): void {
+    const amp = Math.max(0.01, p.cyclePeak - p.cycleTrough);
+    if (isCalib) {
+      p.calibPeakVel.push(Math.abs(p.velocity));
+    }
+
+    const periodHint = p.profile?.periodMs ?? 1000;
+    const refractory = Math.min(
+      REFRACTORY_MAX_MS,
+      Math.max(REFRACTORY_MIN_MS, periodHint * REFRACTORY_RATIO),
+    );
+    p.refractoryUntil = now + refractory;
+
+    if (p.lastStrokeAt > 0) {
+      const interval = now - p.lastStrokeAt;
+      if (interval > 320 && interval < 2800) {
+        p.strokeIntervals.push(interval);
+      }
+    }
+    p.lastStrokeAt = now;
+
+    const strength = isCalib
+      ? Math.min(1, amp * 4)
+      : Math.min(1, amp / (p.profile!.amplitudeNorm + 0.05));
+
+    this.emit({
+      type: "StrokeDetected",
+      player,
+      strength: Math.max(0.25, strength),
+      at: now,
+    });
   }
 
   private finishCalibration(now: number): void {
@@ -157,70 +288,45 @@ export class RhythmEngine {
           ? median(intervals)
           : intervals.length === 1
             ? intervals[0]
-            : 1100;
+            : 1050;
 
       const samples = p.calibSamples;
       const amp =
-        samples.length > 10
-          ? percentile(samples, 0.9) - percentile(samples, 0.1)
-          : 0.15;
+        samples.length > 15
+          ? percentile(samples, 0.92) - percentile(samples, 0.08)
+          : samples.length > 5
+            ? percentile(samples, 0.85) - percentile(samples, 0.15)
+            : 0.12;
+
+      const peakVels = p.calibPeakVel.filter((v) => v > 0.05);
+      const velThresh =
+        peakVels.length >= 2
+          ? Math.max(0.12, median(peakVels) * 0.28)
+          : 0.2;
 
       const profile: PlayerRhythmProfile = {
-        periodMs,
-        amplitudeNorm: Math.max(0.08, amp),
+        periodMs: clamp(periodMs, 550, 2000),
+        amplitudeNorm: Math.max(0.06, amp),
         thresholds: {
-          stroke: 0.012,
-          idle: 0.004,
+          stroke: velThresh,
+          idle: Math.max(0.06, velThresh * 0.25),
         },
       };
       p.profile = profile;
       p.lastStrokeAt = 0;
-      p.refractoryUntil = now + periodMs * 0.35;
+      p.refractoryUntil = now + REFRACTORY_MIN_MS;
+      p.phase = "rising";
+      p.cyclePeak = -Infinity;
+      p.cycleTrough = Infinity;
       this.emit({ type: "CalibrationDone", player, profile });
     }
     for (const player of ["player1", "player2"] as const) {
       if (this.enabled.includes(player)) continue;
-      const profile: PlayerRhythmProfile = {
+      this.players[player].profile = {
         periodMs: 1100,
-        amplitudeNorm: 0.15,
-        thresholds: { stroke: 0.012, idle: 0.004 },
+        amplitudeNorm: 0.12,
+        thresholds: { stroke: 0.2, idle: 0.06 },
       };
-      this.players[player].profile = profile;
-    }
-  }
-
-  private detectStrokeGameplay(
-    p: PlayerState,
-    drive: number,
-    velocity: number,
-    now: number,
-    player: PlayerId,
-  ): void {
-    const profile = p.profile!;
-    if (now < p.refractoryUntil) return;
-
-    if (p.phase === "low" && velocity > profile.thresholds.stroke && drive > 0.3) {
-      p.phase = "high";
-    }
-    if (p.phase === "high" && velocity < -profile.thresholds.stroke * 0.85) {
-      p.phase = "low";
-      p.refractoryUntil = now + profile.periodMs * 0.35;
-
-      p.lastStrokeAt = now;
-
-      const strength = Math.min(1, drive / (profile.amplitudeNorm + 0.2));
-      this.emit({
-        type: "StrokeDetected",
-        player,
-        strength,
-        at: now,
-      });
-    }
-
-    if (p.active && p.lastStrokeAt > 0 && now - p.lastStrokeAt > profile.periodMs * 2.2) {
-      p.active = false;
-      this.emit({ type: "PlayerIdle", player, at: now });
-      this.emit({ type: "ComboLost", player, at: now });
     }
   }
 
@@ -239,4 +345,8 @@ function percentile(arr: number[], p: number): number {
   const s = [...arr].sort((a, b) => a - b);
   const idx = Math.floor(p * (s.length - 1));
   return s[idx];
+}
+
+function clamp(n: number, lo: number, hi: number): number {
+  return Math.min(hi, Math.max(lo, n));
 }
