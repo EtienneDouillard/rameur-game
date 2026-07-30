@@ -127,7 +127,7 @@ export class PoseVision {
 
     if (this.multipose) {
       const poses = await detector.estimatePoses(this.fullCanvas, {
-        flipHorizontal: true,
+        flipHorizontal: false,
         maxPoses: this.playerCount,
       });
       const assigned = assignMultipose(poses, vw, vh, this.playerCount);
@@ -186,7 +186,7 @@ export class PoseVision {
 
     cropCtx.drawImage(srcCtx.canvas, sx, 0, sw, vh, 0, 0, 192, 192);
 
-    const poses = await detector.estimatePoses(this.cropCanvas, { flipHorizontal: true });
+    const poses = await detector.estimatePoses(this.cropCanvas, { flipHorizontal: false });
     const pose = poses[0];
     if (!pose?.keypoints) return [];
 
