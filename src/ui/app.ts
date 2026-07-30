@@ -123,7 +123,8 @@ export class App {
             </div>
             <div class="rb-screen" data-screen="calib">
               <h2>Calibration</h2>
-              <p>Ramez normalement pendant <strong>5 secondes</strong></p>
+              <p>Faites <strong>5 mouvements</strong> de rame face à la caméra (chaque joueur).</p>
+              <p class="rb-mode-hint" data-calib-hint></p>
               <div class="rb-calib-bars">
                 <div class="rb-calib-bar" data-calib-wrap="p1"><span data-calib="p1"></span></div>
                 <div class="rb-calib-bar" data-calib-wrap="p2"><span data-calib="p2"></span></div>
@@ -357,6 +358,13 @@ export class App {
     this.vision?.setPlayerCount(this.playerCount);
     this.showScreen("calib");
     this.setPhaseText("Calibration…");
+    const calibHint = this.root.querySelector<HTMLElement>("[data-calib-hint]");
+    if (calibHint) {
+      calibHint.textContent =
+        this.playerCount === 1
+          ? "Comptez vos coups : la barre se remplit à chaque mouvement détecté."
+          : "Joueur 1 à gauche, joueur 2 à droite — 5 coups chacun.";
+    }
     this.game.beginCalibration(this.playerCount, this.matchDurationSec);
     this.rhythm.startCalibration(this.playerCount);
   }
