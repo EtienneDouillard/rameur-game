@@ -1,4 +1,5 @@
 import type {
+  CalibrationUiPhase,
   GameEvent,
   GameEventListener,
   PlayerId,
@@ -10,6 +11,7 @@ import { extractFeatures } from "./features";
 import { OneEuroFilter } from "./oneEuro";
 
 const CALIBRATION_STROKES = 5;
+export { CALIBRATION_STROKES };
 /** Échantillons au repos avant les 5 coups (par joueur) */
 const CALIB_IDLE_MIN_MS = 2200;
 const CALIB_IDLE_MIN_SAMPLES = 45;
@@ -183,11 +185,12 @@ export class RhythmEngine {
           p.calibIdleSamples.push(driveFiltered);
           const idleMs = now - p.calibIdleStartedAt;
           const idleProgress = Math.min(1, idleMs / CALIB_IDLE_MIN_MS);
-          this.emit({
-            type: "CalibrationProgress",
-            player: frame.player,
-            progress: idleProgress * 0.22,
-          });
+          this.emitCalibProgress(
+            frame.player,
+            idleProgress * 0.22,
+            "idle",
+            0,
+          );
           if (
             idleMs >= CALIB_IDLE_MIN_MS &&
             p.calibIdleSamples.length >= CALIB_IDLE_MIN_SAMPLES
@@ -329,7 +332,7 @@ export class RhythmEngine {
       p.calibStrokeCount += 1;
       const strokePart = p.calibStrokeCount / CALIBRATION_STROKES;
       const progress = 0.22 + strokePart * 0.78;
-      this.emit({ type: "CalibrationProgress", player, progress });
+      this.emitCalibProgress(player, progress, "strokes", p.calibStrokeCount);
       if (p.calibStrokeCount >= CALIBRATION_STROKES) {
         this.finishPlayerCalibration(player, now);
       }
@@ -415,6 +418,7 @@ export class RhythmEngine {
     p.cyclePeak = -Infinity;
     p.cycleTrough = Infinity;
     p.active = false;
+    this.emitCalibProgress(player, 1, "ready", CALIBRATION_STROKES);
     this.emit({ type: "CalibrationDone", player, profile });
 
     if (this.enabled.every((id) => this.players[id].profile !== null)) {
@@ -434,6 +438,22 @@ export class RhythmEngine {
         thresholds: { stroke: 0.18, idle: 0.06 },
       };
     }
+  }
+
+  private emitCalibProgress(
+    player: PlayerId,
+    progress: number,
+    phase: CalibrationUiPhase,
+    strokesDone: number,
+  ): void {
+    this.emit({
+      type: "CalibrationProgress",
+      player,
+      progress: Math.min(1, progress),
+      phase,
+      strokesDone,
+      strokesRequired: CALIBRATION_STROKES,
+    });
   }
 
   getProfile(player: PlayerId): PlayerRhythmProfile | null {

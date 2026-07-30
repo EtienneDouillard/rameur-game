@@ -40,6 +40,7 @@ export class App {
   private music: BackgroundMusic | null = null;
   private lastCombo: Record<PlayerId, number> = { player1: 0, player2: 0 };
   private calibDone: Record<PlayerId, boolean> = { player1: false, player2: false };
+  private calibStrokeSeen: Record<PlayerId, number> = { player1: 0, player2: 0 };
   private lastFrameAt = 0;
   private frameCount = 0;
   private animHandle = 0;
@@ -165,8 +166,14 @@ export class App {
               <p data-calib-step><strong>1.</strong> Restez <strong>immobile ~2 s</strong> face à la caméra.</p>
               <p class="rb-mode-hint" data-calib-hint>Puis 5 coups de rame pour calibrer l'IA sur votre mouvement.</p>
               <div class="rb-calib-bars">
-                <div class="rb-calib-bar" data-calib-wrap="p1"><span data-calib="p1"></span></div>
-                <div class="rb-calib-bar" data-calib-wrap="p2"><span data-calib="p2"></span></div>
+                <div class="rb-calib-row" data-calib-wrap="p1">
+                  <p class="rb-calib-detail" data-calib-detail="p1">…</p>
+                  <div class="rb-calib-bar"><span data-calib="p1"></span></div>
+                </div>
+                <div class="rb-calib-row" data-calib-wrap="p2">
+                  <p class="rb-calib-detail" data-calib-detail="p2">…</p>
+                  <div class="rb-calib-bar"><span data-calib="p2"></span></div>
+                </div>
               </div>
             </div>
             <div class="rb-screen rb-screen--play" data-screen="play"></div>
@@ -435,6 +442,7 @@ export class App {
   private beginMatch(): void {
     this.multiposeTried = false;
     this.calibDone = { player1: false, player2: false };
+    this.calibStrokeSeen = { player1: 0, player2: 0 };
     this.lastCombo = { player1: 0, player2: 0 };
     this.lastComboTier = { player1: 1, player2: 1 };
     this.wasInFlow = { player1: false, player2: false };
@@ -454,6 +462,10 @@ export class App {
           ? "Ne bougez pas au début, puis ramez comme en partie."
           : "Chaque marin : immobile, puis 5 coups.";
     }
+    const p2Wrap = this.root.querySelector<HTMLElement>('[data-calib-wrap="p2"]');
+    if (p2Wrap) p2Wrap.hidden = this.playerCount === 1;
+    this.resetCalibPlayerUi("p1");
+    this.resetCalibPlayerUi("p2");
     this.game.beginCalibration(this.playerCount, this.matchDurationSec);
     this.rhythm.startCalibration(this.playerCount);
   }
@@ -468,14 +480,37 @@ export class App {
       const key = ev.player === "player1" ? "p1" : "p2";
       const bar = this.root.querySelector<HTMLElement>(`[data-calib="${key}"]`);
       if (bar) bar.style.width = `${Math.round(ev.progress * 100)}%`;
+      const wrap = this.root.querySelector<HTMLElement>(`[data-calib-wrap="${key}"]`);
+      wrap?.classList.toggle("rb-calib-row--ready", ev.phase === "ready");
+      const detail = this.root.querySelector<HTMLElement>(`[data-calib-detail="${key}"]`);
+      const label = this.calibPlayerLabel(ev.player);
+      if (detail) {
+        if (ev.phase === "idle") {
+          detail.textContent = `${label} : immobile — l'IA mesure le repos…`;
+        } else if (ev.phase === "strokes") {
+          detail.textContent = `${label} : coup ${ev.strokesDone} / ${ev.strokesRequired}`;
+        } else {
+          detail.textContent = `${label} : profil enregistré ✓`;
+        }
+      }
+      if (
+        ev.phase === "strokes" &&
+        ev.strokesDone > this.calibStrokeSeen[ev.player]
+      ) {
+        this.calibStrokeSeen[ev.player] = ev.strokesDone;
+        this.sound.playStroke(1);
+      }
       const step = this.root.querySelector<HTMLElement>("[data-calib-step]");
       if (step) {
-        if (ev.progress < 0.23) {
+        if (ev.phase === "idle") {
           step.innerHTML =
-            "<strong>1.</strong> Restez <strong>immobile</strong> — l'IA mesure le calme de la mer…";
-        } else if (ev.progress < 1) {
+            "<strong>1.</strong> Restez <strong>immobile ~2 s</strong> — l'IA mesure le calme de la mer.";
+        } else if (ev.phase === "strokes") {
           step.innerHTML =
-            "<strong>2.</strong> Ramez : <strong>5 coups</strong> nets pour calibrer votre rythme.";
+            "<strong>2.</strong> Ramez : <strong>5 coups</strong> nets (un petit son confirme chaque coup compté).";
+        } else {
+          step.innerHTML =
+            "<strong>Terminé</strong> pour ce marin — en attente des autres ou départ imminent…";
         }
       }
     }
@@ -534,6 +569,20 @@ export class App {
     el?.classList.remove("rb-score--pop");
     void el?.offsetWidth;
     el?.classList.add("rb-score--pop");
+  }
+
+  private calibPlayerLabel(player: PlayerId): string {
+    if (this.playerCount === 1) return "Vous";
+    return player === "player1" ? "Bâbord" : "Tribord";
+  }
+
+  private resetCalibPlayerUi(key: "p1" | "p2"): void {
+    const bar = this.root.querySelector<HTMLElement>(`[data-calib="${key}"]`);
+    if (bar) bar.style.width = "0%";
+    const wrap = this.root.querySelector<HTMLElement>(`[data-calib-wrap="${key}"]`);
+    wrap?.classList.remove("rb-calib-row--ready");
+    const detail = this.root.querySelector<HTMLElement>(`[data-calib-detail="${key}"]`);
+    if (detail) detail.textContent = "…";
   }
 
   private playerSide(player: PlayerId): "left" | "right" | "center" {
