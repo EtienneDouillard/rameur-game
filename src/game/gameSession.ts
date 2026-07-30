@@ -125,6 +125,9 @@ export class GameSession {
     this.phase = "playing";
     this.playStart = performance.now();
     this.lastTick = this.playStart;
+    this.lastStrokeAt = { player1: 0, player2: 0 };
+    this.flow.reset();
+    this.syncFlowStats();
     this.tick();
   }
 
@@ -174,14 +177,14 @@ export class GameSession {
       }
     } else {
       s.combo = 1;
-      flowRegular = true;
+      flowRegular = false;
     }
     s.maxCombo = Math.max(s.maxCombo, s.combo);
     s.strokes++;
     this.lastStrokeAt[player] = at;
 
     const mult = multiplierForCombo(s.combo);
-    const flowMult = this.flow.onStroke(player, flowRegular);
+    const flowMult = this.flow.onStroke(player, flowRegular, at);
     const points = Math.round(100 * strength * mult * flowMult);
     s.score += points;
     this.syncFlowStats();
@@ -242,10 +245,10 @@ export class GameSession {
 
 export function strokeRateSpm(intervals: number[]): number {
   if (intervals.length === 0) return 0;
-  const recent = intervals.slice(-5);
+  const recent = intervals.slice(-5).filter((i) => i >= 450 && i <= 2500);
+  if (recent.length === 0) return 0;
   const avg = recent.reduce((a, b) => a + b, 0) / recent.length;
-  if (avg < 250) return 0;
-  return Math.min(60, Math.round(60000 / avg));
+  return Math.min(45, Math.round(60000 / avg));
 }
 
 export { multiplierForCombo, comboLabel } from "./combo";

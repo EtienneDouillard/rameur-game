@@ -5,6 +5,8 @@ export const FLOW_CHARGE_STROKES = 7;
 /** Coups en flow avec multiplicateur de score */
 export const FLOW_BOOST_STROKES = 10;
 const FLOW_SCORE_MULT = 1.45;
+/** Sans coup régulier, le flow / la charge tombent */
+const FLOW_IDLE_MS = 2200;
 
 export interface FlowSnapshot {
   /** Remplissage jauge latérale 0–1 */
@@ -26,6 +28,7 @@ interface PlayerFlowState {
   charge: number;
   inFlow: boolean;
   boostLeft: number;
+  lastStrokeAt: number;
 }
 
 export class FlowController {
@@ -35,7 +38,7 @@ export class FlowController {
   };
 
   private empty(): PlayerFlowState {
-    return { charge: 0, inFlow: false, boostLeft: 0 };
+    return { charge: 0, inFlow: false, boostLeft: 0, lastStrokeAt: 0 };
   }
 
   reset(): void {
@@ -46,8 +49,9 @@ export class FlowController {
   /**
    * @param flowRegular coup dans une fenêtre de rythme plus stricte (pour le flow)
    */
-  onStroke(player: PlayerId, flowRegular: boolean): number {
+  onStroke(player: PlayerId, flowRegular: boolean, at = performance.now()): number {
     const s = this.state[player];
+    s.lastStrokeAt = at;
 
     if (s.inFlow) {
       if (!flowRegular) {
@@ -79,8 +83,15 @@ export class FlowController {
     return 1;
   }
 
-  tick(_dtSec: number): void {
-    /* pas de décroissance passive : tout passe par les coups */
+  tick(_dtSec: number, now = performance.now()): void {
+    for (const id of ["player1", "player2"] as const) {
+      const s = this.state[id];
+      if (s.lastStrokeAt <= 0) continue;
+      if (now - s.lastStrokeAt < FLOW_IDLE_MS) continue;
+      if (s.inFlow || s.charge > 0) {
+        this.resetPlayer(id);
+      }
+    }
   }
 
   onComboBreak(player: PlayerId): void {

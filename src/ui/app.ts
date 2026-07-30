@@ -149,7 +149,7 @@ export class App {
               </div>
             </div>
             <div class="rb-screen rb-screen--play" data-screen="play">
-              <p class="rb-play-hint">À l'unisson, marins !</p>
+              <p class="rb-play-hint" data-play-hint hidden>À l'unisson, marins !</p>
             </div>
             <div class="rb-screen" data-screen="end">
               <h2 data-winner>Victoire</h2>
@@ -499,7 +499,14 @@ export class App {
   }
 
   private checkFlowStates(snap: GameSnapshot): void {
-    if (snap.phase !== "playing") return;
+    if (snap.phase !== "playing") {
+      for (const key of ["p1", "p2"] as const) {
+        const badge = this.root.querySelector<HTMLElement>(`[data-flow="${key}"]`);
+        if (badge) badge.hidden = true;
+      }
+      this.hidePlayHint();
+      return;
+    }
     for (const player of activePlayers(this.playerCount)) {
       const flow = player === "player1" ? snap.player1.flow : snap.player2.flow;
       const key = player === "player1" ? "p1" : "p2";
@@ -519,6 +526,24 @@ export class App {
       }
       this.wasInFlow[player] = flow.inFlow;
     }
+    this.updatePlayHint(snap);
+  }
+
+  /** Hint visible seulement proche du flow (5/7+) et hors flow */
+  private updatePlayHint(snap: GameSnapshot): void {
+    const hint = this.root.querySelector<HTMLElement>("[data-play-hint]");
+    if (!hint) return;
+    let nearFlow = false;
+    for (const player of activePlayers(this.playerCount)) {
+      const flow = player === "player1" ? snap.player1.flow : snap.player2.flow;
+      if (!flow.inFlow && flow.chargeProgress >= 5) nearFlow = true;
+    }
+    hint.hidden = !nearFlow;
+  }
+
+  private hidePlayHint(): void {
+    const hint = this.root.querySelector<HTMLElement>("[data-play-hint]");
+    if (hint) hint.hidden = true;
   }
 
   private updateVideoComboFx(snap: GameSnapshot): void {
