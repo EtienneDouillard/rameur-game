@@ -33,6 +33,7 @@ Documentation : [`docs/ARCHITECTURE-TECHNIQUE.md`](docs/ARCHITECTURE-TECHNIQUE.m
 ## Règles (résumé)
 
 README.md
-- Score basé sur régularité et **combo** (×1 → ×10).
+- Un point par **coup complet**, compté au tirage (rien au retour).
+- Score basé sur régularité et **combo** (×1 → ×4), gardé lisible (quelques centaines de points par manche).
 - Rythme irrégulier : combo à zéro.
 - Calibration automatique (**15 s** de préparation puis **10 coups**, puis **3-2-1 EN MER**) au début de chaque partie.

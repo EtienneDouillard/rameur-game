@@ -629,15 +629,15 @@ export class App {
 
     const { x, y } = this.effectCoords(player);
     const hue = player === "player1" ? 195 : 320;
-    const intensity = strength * (mult >= 5 ? 2 : mult >= 2 ? 1.4 : 1);
+    const intensity = strength * (mult >= 3 ? 2 : mult >= 2 ? 1.4 : 1);
     this.particles?.burst(x, y, intensity, side);
     this.particles?.shockwave(x, y, hue);
     if (stats.flow.inFlow) {
       this.particles?.flashScreen(0.8);
       this.particles?.burst(x, y, 2, side);
-    } else if (mult >= 10) {
+    } else if (mult >= 4) {
       this.particles?.flashScreen(1);
-    } else if (mult >= 5) {
+    } else if (mult >= 3) {
       this.particles?.burst(x, y, 1.5, side);
     }
 
