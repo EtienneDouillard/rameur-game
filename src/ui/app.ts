@@ -203,6 +203,8 @@ export class App {
       void this.boot();
     this.root.querySelector<HTMLButtonElement>('[data-action="replay"]')!.onclick = () =>
       void this.replay();
+
+    this.showScreen("start");
   }
 
   private setPlayerCount(count: PlayerCount): void {
@@ -285,6 +287,7 @@ export class App {
     const rb = this.root.querySelector<HTMLElement>("[data-rb]")!;
     rb.classList.toggle("rb--live", name === "calib" || name === "play");
     rb.classList.toggle("rb--overlay-light", name === "start" || name === "end");
+    rb.classList.toggle("rb--preplay", name === "start" || name === "calib" || name === "end");
   }
 
   private async boot(): Promise<void> {

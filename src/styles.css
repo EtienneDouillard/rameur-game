@@ -20,6 +20,7 @@ html,
 body {
   margin: 0;
   height: 100%;
+  min-height: 100dvh;
   overflow: hidden;
   background: var(--bg);
   color: var(--text);
@@ -29,15 +30,22 @@ body {
 
 #app {
   height: 100%;
+  min-height: 100dvh;
 }
 
 .rb {
   position: relative;
   height: 100%;
+  min-height: 100dvh;
   display: flex;
   flex-direction: column;
   overflow: hidden;
   background: var(--bg);
+  padding:
+    env(safe-area-inset-top, 0)
+    env(safe-area-inset-right, 0)
+    env(safe-area-inset-bottom, 0)
+    env(safe-area-inset-left, 0);
 }
 
 .rb-video-stage {
@@ -860,5 +868,80 @@ body {
 @media (max-width: 600px) {
   .rb-main {
     grid-template-columns: 36px 1fr 36px;
+  }
+}
+
+/* Menu / calibration / fin : masquer le HUD jeu et centrer la modale (iPad Safari) */
+.rb--preplay .rb-hud {
+  display: none;
+}
+
+.rb--preplay .rb-column {
+  display: none;
+}
+
+.rb--preplay .rb-main {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  grid-template-columns: unset;
+  padding: 0.5rem 1rem 0.75rem;
+  min-height: 0;
+}
+
+.rb--preplay .rb-center {
+  width: 100%;
+  max-width: min(520px, 100%);
+  max-height: 100%;
+  overflow: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+}
+
+.rb--preplay .rb-video-divider {
+  opacity: 0;
+}
+
+.rb--preplay .rb-video-fx {
+  background: linear-gradient(
+    180deg,
+    rgba(7, 11, 20, 0.82) 0%,
+    rgba(7, 11, 20, 0.72) 50%,
+    rgba(7, 11, 20, 0.85) 100%
+  );
+}
+
+.rb--preplay .rb-footer {
+  flex-shrink: 0;
+  padding-bottom: max(0.35rem, env(safe-area-inset-bottom, 0));
+}
+
+.rb--preplay .rb-screen {
+  width: 100%;
+  max-height: none;
+}
+
+.rb--preplay .rb-screen--active {
+  margin: auto;
+}
+
+@media (orientation: landscape) and (max-height: 520px) {
+  .rb--preplay .rb-screen {
+    padding: 0.85rem 1.25rem;
+  }
+
+  .rb--preplay .rb-screen h1 {
+    font-size: clamp(2rem, 8vh, 3.25rem);
+    margin-bottom: 0.25rem;
+  }
+
+  .rb--preplay .rb-mode-label {
+    margin-top: 0.5rem;
+  }
+
+  .rb--preplay .rb-btn {
+    margin-top: 0.75rem;
+    padding: 0.75rem 2rem;
   }
 }
