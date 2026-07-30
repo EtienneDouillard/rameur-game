@@ -26,7 +26,7 @@ Ouvrir l’URL affichée (HTTPS requis en production pour la caméra). Utilisez 
 | Gameplay (90 s, score, combo) | `src/game/` |
 | UI + particules + audio | `src/ui/`, `src/audio/` |
 
-Documentation détaillée : voir branche `cursor/phase1-etude-technique-29a6` (`docs/`).
+Documentation : [`docs/ARCHITECTURE-TECHNIQUE.md`](docs/ARCHITECTURE-TECHNIQUE.md), [`docs/PHASE1-ETUDE-COMPARATIVE.md`](docs/PHASE1-ETUDE-COMPARATIVE.md).
 
 ## Règles (résumé)
 
