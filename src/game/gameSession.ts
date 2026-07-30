@@ -191,19 +191,6 @@ export class GameSession {
     }
   }
 
-  getMusicEnergy(): { energy: number; finalRush: boolean } {
-    const snap = this.getSnapshot();
-    if (snap.phase !== "playing") return { energy: 0.1, finalRush: false };
-    const combos = { player1: snap.player1.combo, player2: snap.player2.combo };
-    const energy = this.flow.matchEnergy(activePlayers(this.playerCount), combos);
-    const comboBoost =
-      Math.max(multiplierForCombo(combos.player1), multiplierForCombo(combos.player2)) / 10;
-    return {
-      energy: Math.min(1, energy + comboBoost + (snap.finalRush ? 0.25 : 0)),
-      finalRush: snap.finalRush,
-    };
-  }
-
   private broadcast(): void {
     const snap = this.getSnapshot();
     for (const l of this.snapshotListeners) l(snap);

@@ -1,5 +1,18 @@
 export class SoundEngine {
   private ctx: AudioContext | null = null;
+  private sfxEnabled = true;
+
+  setSfxEnabled(on: boolean): void {
+    this.sfxEnabled = on;
+  }
+
+  isSfxEnabled(): boolean {
+    return this.sfxEnabled;
+  }
+
+  private ok(): boolean {
+    return this.sfxEnabled && this.ctx !== null;
+  }
 
   async unlock(): Promise<void> {
     if (!this.ctx) {
@@ -15,8 +28,8 @@ export class SoundEngine {
   }
 
   playStroke(comboMult: number): void {
-    const ctx = this.ctx;
-    if (!ctx) return;
+    if (!this.ok()) return;
+    const ctx = this.ctx!;
     const t = ctx.currentTime;
     const osc = ctx.createOscillator();
     const gain = ctx.createGain();
@@ -35,8 +48,8 @@ export class SoundEngine {
   }
 
   playComboTick(): void {
-    const ctx = this.ctx;
-    if (!ctx) return;
+    if (!this.ok()) return;
+    const ctx = this.ctx!;
     const t = ctx.currentTime;
     const osc = ctx.createOscillator();
     const g = ctx.createGain();
@@ -52,8 +65,8 @@ export class SoundEngine {
   }
 
   playTierUp(tier: number): void {
-    const ctx = this.ctx;
-    if (!ctx) return;
+    if (!this.ok()) return;
+    const ctx = this.ctx!;
     const t = ctx.currentTime;
     const base = 300 + tier * 80;
     for (let i = 0; i < 4; i++) {
@@ -73,8 +86,8 @@ export class SoundEngine {
   }
 
   playFlowEnter(): void {
-    const ctx = this.ctx;
-    if (!ctx) return;
+    if (!this.ok()) return;
+    const ctx = this.ctx!;
     const t = ctx.currentTime;
     const osc = ctx.createOscillator();
     const g = ctx.createGain();
@@ -91,8 +104,8 @@ export class SoundEngine {
   }
 
   playFlowFade(): void {
-    const ctx = this.ctx;
-    if (!ctx) return;
+    if (!this.ok()) return;
+    const ctx = this.ctx!;
     const t = ctx.currentTime;
     const osc = ctx.createOscillator();
     const g = ctx.createGain();
@@ -108,8 +121,8 @@ export class SoundEngine {
   }
 
   playOverdrive(): void {
-    const ctx = this.ctx;
-    if (!ctx) return;
+    if (!this.ok()) return;
+    const ctx = this.ctx!;
     const t = ctx.currentTime;
     this.noiseClick(t, 0.12, 0.08);
     const osc = ctx.createOscillator();
@@ -127,8 +140,8 @@ export class SoundEngine {
   }
 
   playComboBreak(): void {
-    const ctx = this.ctx;
-    if (!ctx) return;
+    if (!this.ok()) return;
+    const ctx = this.ctx!;
     const t = ctx.currentTime;
     const osc = ctx.createOscillator();
     const gain = ctx.createGain();
@@ -144,8 +157,8 @@ export class SoundEngine {
   }
 
   playCountdownTick(urgent: boolean): void {
-    const ctx = this.ctx;
-    if (!ctx) return;
+    if (!this.ok()) return;
+    const ctx = this.ctx!;
     const t = ctx.currentTime;
     const osc = ctx.createOscillator();
     const g = ctx.createGain();
@@ -160,8 +173,8 @@ export class SoundEngine {
   }
 
   playVictory(): void {
-    const ctx = this.ctx;
-    if (!ctx) return;
+    if (!this.ok()) return;
+    const ctx = this.ctx!;
     const notes = [523, 659, 784, 1047];
     const t = ctx.currentTime;
     notes.forEach((freq, i) => {
@@ -181,8 +194,8 @@ export class SoundEngine {
   }
 
   playDefeat(): void {
-    const ctx = this.ctx;
-    if (!ctx) return;
+    if (!this.ok()) return;
+    const ctx = this.ctx!;
     const t = ctx.currentTime;
     const osc = ctx.createOscillator();
     const g = ctx.createGain();
@@ -199,7 +212,7 @@ export class SoundEngine {
 
   private noiseClick(time: number, vol: number, dur: number): void {
     const ctx = this.ctx;
-    if (!ctx) return;
+    if (!ctx || !this.sfxEnabled) return;
     const n = Math.floor(ctx.sampleRate * dur);
     const buf = ctx.createBuffer(1, n, ctx.sampleRate);
     const d = buf.getChannelData(0);

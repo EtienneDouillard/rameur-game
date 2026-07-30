@@ -14,7 +14,8 @@ import { startCamera, stopCamera } from "../vision/camera";
 import { ParticleField } from "./particles";
 import { VideoStageFx } from "./videoStageFx";
 import { CameraRig } from "./cameraRig";
-import { MusicEngine } from "../audio/musicEngine";
+import { BackgroundMusic } from "../audio/backgroundMusic";
+import { loadAudioPrefs, saveAudioPrefs } from "../audio/audioPrefs";
 import {
   DEFAULT_MATCH_DURATION_SEC,
   formatMatchTimer,
@@ -33,7 +34,7 @@ export class App {
   private particles: ParticleField | null = null;
   private videoFx: VideoStageFx | null = null;
   private cameraRig: CameraRig | null = null;
-  private music: MusicEngine | null = null;
+  private music: BackgroundMusic | null = null;
   private lastCombo: Record<PlayerId, number> = { player1: 0, player2: 0 };
   private calibDone: Record<PlayerId, boolean> = { player1: false, player2: false };
   private lastFrameAt = 0;
@@ -46,6 +47,8 @@ export class App {
   private lastComboTier: Record<PlayerId, number> = { player1: 1, player2: 1 };
   private lastCountdownSec = -1;
   private matchDurationSec: MatchDurationSec = DEFAULT_MATCH_DURATION_SEC;
+  private audioMusicOn = true;
+  private audioSfxOn = true;
 
   constructor(root: HTMLElement, video: HTMLVideoElement) {
     this.root = root;
@@ -110,6 +113,11 @@ export class App {
                     `<button type="button" class="rb-mode rb-duration" data-duration="${sec}">${sec}s</button>`,
                 ).join("")}
               </div>
+              <p class="rb-mode-label">Son</p>
+              <div class="rb-mode-picker" role="group" aria-label="Audio">
+                <button type="button" class="rb-mode rb-mode--active" data-audio-toggle="music">Musique : ON</button>
+                <button type="button" class="rb-mode rb-mode--active" data-audio-toggle="sfx">Effets : ON</button>
+              </div>
               <p class="rb-privacy">La vidéo reste sur cet appareil.</p>
               <button type="button" class="rb-btn rb-btn--primary" data-action="start">Jouer</button>
               <p class="rb-hint" data-load-status></p>
@@ -139,7 +147,13 @@ export class App {
             <div class="rb-flash" data-flash="p2"></div>
           </div>
         </main>
-        <footer class="rb-footer" data-fps></footer>
+        <footer class="rb-footer">
+          <span data-fps></span>
+          <span class="rb-footer-audio">
+            <button type="button" class="rb-audio-mini" data-audio-toggle="music" title="Musique">♪</button>
+            <button type="button" class="rb-audio-mini" data-audio-toggle="sfx" title="Effets">FX</button>
+          </span>
+        </footer>
       </div>
     `;
 
@@ -175,6 +189,15 @@ export class App {
     });
     this.setPlayerCount(1);
     this.setMatchDuration(DEFAULT_MATCH_DURATION_SEC);
+    this.applyAudioPrefs(loadAudioPrefs());
+
+    this.root.querySelectorAll<HTMLButtonElement>("[data-audio-toggle]").forEach((btn) => {
+      btn.onclick = () => {
+        const kind = btn.dataset.audioToggle as "music" | "sfx";
+        if (kind === "music") this.setAudioMusic(!this.audioMusicOn);
+        else this.setAudioSfx(!this.audioSfxOn);
+      };
+    });
 
     this.root.querySelector<HTMLButtonElement>('[data-action="start"]')!.onclick = () =>
       void this.boot();
@@ -208,6 +231,53 @@ export class App {
     if (timerEl) timerEl.textContent = formatMatchTimer(sec);
   }
 
+  private applyAudioPrefs(prefs: { music: boolean; sfx: boolean }): void {
+    this.audioMusicOn = prefs.music;
+    this.audioSfxOn = prefs.sfx;
+    this.music = this.music ?? new BackgroundMusic();
+    this.music.setEnabled(this.audioMusicOn);
+    this.sound.setSfxEnabled(this.audioSfxOn);
+    this.updateAudioToggleLabels();
+  }
+
+  private setAudioMusic(on: boolean): void {
+    this.audioMusicOn = on;
+    if (!this.music) this.music = new BackgroundMusic();
+    this.music.setEnabled(on);
+    if (on && this.game.getPhase() === "playing") void this.music.start();
+    this.persistAudioPrefs();
+    this.updateAudioToggleLabels();
+  }
+
+  private setAudioSfx(on: boolean): void {
+    this.audioSfxOn = on;
+    this.sound.setSfxEnabled(on);
+    this.persistAudioPrefs();
+    this.updateAudioToggleLabels();
+  }
+
+  private persistAudioPrefs(): void {
+    saveAudioPrefs({ music: this.audioMusicOn, sfx: this.audioSfxOn });
+  }
+
+  private updateAudioToggleLabels(): void {
+    this.root.querySelectorAll<HTMLButtonElement>("[data-audio-toggle]").forEach((btn) => {
+      const kind = btn.dataset.audioToggle;
+      if (kind === "music") {
+        const on = this.audioMusicOn;
+        btn.textContent = btn.classList.contains("rb-audio-mini") ? "♪" : `Musique : ${on ? "ON" : "OFF"}`;
+        btn.classList.toggle("rb-mode--active", on);
+        btn.classList.toggle("rb-audio-mini--off", !on);
+      }
+      if (kind === "sfx") {
+        const on = this.audioSfxOn;
+        btn.textContent = btn.classList.contains("rb-audio-mini") ? "FX" : `Effets : ${on ? "ON" : "OFF"}`;
+        btn.classList.toggle("rb-mode--active", on);
+        btn.classList.toggle("rb-audio-mini--off", !on);
+      }
+    });
+  }
+
   private showScreen(name: "start" | "calib" | "play" | "end"): void {
     this.root.querySelectorAll<HTMLElement>(".rb-screen").forEach((el) => {
       el.classList.toggle("rb-screen--active", el.dataset.screen === name);
@@ -221,8 +291,8 @@ export class App {
     const status = this.root.querySelector<HTMLElement>("[data-load-status]")!;
     status.textContent = "Autorisation caméra…";
     await this.sound.unlock();
-    const ctx = this.sound.getContext();
-    if (ctx) this.music = new MusicEngine(ctx);
+    this.music = new BackgroundMusic();
+    this.applyAudioPrefs(loadAudioPrefs());
 
     try {
       await startCamera(this.video);
@@ -306,7 +376,7 @@ export class App {
         this.showScreen("play");
         this.setPhaseText("C’est parti !");
         this.game.startPlaying();
-        this.music?.start();
+        void this.music?.start();
       }
     }
     if (ev.type === "StrokeDetected" && this.game.getPhase() === "playing") {
@@ -441,9 +511,7 @@ export class App {
       anyOd = anyOd || f.overdrive;
     }
     this.cameraRig?.update(maxFlow, anyOd, snap.finalRush);
-
-    const { energy, finalRush } = this.game.getMusicEnergy();
-    this.music?.setEnergy(energy, finalRush);
+    this.music?.setFinalRush(snap.finalRush);
 
     const sec = Math.ceil(snap.timeLeftMs / 1000);
     const rushEl = this.root.querySelector<HTMLElement>("[data-rush]");
