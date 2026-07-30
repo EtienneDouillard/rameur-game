@@ -1,4 +1,6 @@
 import type { GameEvent, PlayerId } from "../types/events";
+import type { PlayerCount } from "../types/gameMode";
+import { activePlayers } from "../types/gameMode";
 
 const GAME_DURATION_MS = 90_000;
 
@@ -54,12 +56,15 @@ export class GameSession {
     return this.phase;
   }
 
-  beginCalibration(): void {
+  beginCalibration(playerCount: PlayerCount = 2): void {
     this.phase = "calibrating";
     this.stats.player1 = emptyStats();
     this.stats.player2 = emptyStats();
+    this.playerCount = playerCount;
     this.broadcast();
   }
+
+  private playerCount: PlayerCount = 2;
 
   onGameEvent(event: GameEvent): void {
     if (event.type === "CalibrationDone") {
@@ -75,9 +80,14 @@ export class GameSession {
         this.handleStroke(event.player, event.strength, event.at);
         break;
       case "ComboLost":
-        this.stats[event.player].combo = 0;
-        this.stats[event.player].energy = Math.max(0.15, this.stats[event.player].energy - 0.25);
-        this.broadcast();
+        if (this.playerCount === 2 || event.player === "player1") {
+          this.stats[event.player].combo = 0;
+          this.stats[event.player].energy = Math.max(
+            0.15,
+            this.stats[event.player].energy - 0.25,
+          );
+          this.broadcast();
+        }
         break;
       case "CalibrationProgress":
         break;
@@ -100,7 +110,7 @@ export class GameSession {
       this.broadcast();
       return;
     }
-    for (const id of ["player1", "player2"] as const) {
+    for (const id of activePlayers(this.playerCount)) {
       const s = this.stats[id];
       s.energy = Math.max(0.1, s.energy - 0.0008);
     }

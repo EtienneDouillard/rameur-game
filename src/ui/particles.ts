@@ -9,10 +9,21 @@ export interface Particle {
   size: number;
 }
 
+interface FloatText {
+  x: number;
+  y: number;
+  vy: number;
+  life: number;
+  text: string;
+  hue: number;
+  scale: number;
+}
+
 export class ParticleField {
   private canvas: HTMLCanvasElement;
   private ctx: CanvasRenderingContext2D;
   private particles: Particle[] = [];
+  private floatTexts: FloatText[] = [];
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
@@ -32,9 +43,9 @@ export class ParticleField {
     this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   }
 
-  burst(x: number, y: number, intensity: number, side: "left" | "right"): void {
-    const count = Math.floor(12 + intensity * 30);
-    const baseHue = side === "left" ? 195 : 320;
+  burst(x: number, y: number, intensity: number, side: "left" | "right" | "center"): void {
+    const count = Math.floor(16 + intensity * 40);
+    const baseHue = side === "right" ? 320 : side === "left" ? 195 : 45;
     for (let i = 0; i < count; i++) {
       const angle = (Math.PI * 2 * i) / count + Math.random() * 0.4;
       const speed = 2 + Math.random() * 6 * intensity;
@@ -69,11 +80,51 @@ export class ParticleField {
     }
   }
 
+  scorePopup(x: number, y: number, text: string, hue: number): void {
+    this.floatTexts.push({ x, y, vy: -55, life: 1, text, hue, scale: 1 });
+  }
+
+  streak(side: "left" | "right" | "center"): void {
+    const w = this.canvas.parentElement?.clientWidth ?? 800;
+    const h = this.canvas.parentElement?.clientHeight ?? 600;
+    const x = side === "left" ? w * 0.2 : side === "right" ? w * 0.8 : w * 0.5;
+    for (let i = 0; i < 8; i++) {
+      this.particles.push({
+        x: x + (Math.random() - 0.5) * 40,
+        y: h * 0.3 + Math.random() * h * 0.4,
+        vx: (Math.random() - 0.5) * 2,
+        vy: 4 + Math.random() * 8,
+        life: 1,
+        maxLife: 0.35 + Math.random() * 0.25,
+        hue: 50,
+        size: 2 + Math.random() * 3,
+      });
+    }
+  }
+
   tick(dt: number): void {
     const w = this.canvas.parentElement?.clientWidth ?? 800;
     const h = this.canvas.parentElement?.clientHeight ?? 600;
 
     this.ctx.clearRect(0, 0, w, h);
+
+    for (const t of this.floatTexts) {
+      t.life -= dt * 1.2;
+      t.y += t.vy * dt;
+      t.scale = 1 + (1 - t.life) * 0.4;
+      if (t.life <= 0) continue;
+      this.ctx.save();
+      this.ctx.translate(t.x, t.y);
+      this.ctx.scale(t.scale, t.scale);
+      this.ctx.font = "800 28px Outfit, sans-serif";
+      this.ctx.fillStyle = `hsla(${t.hue}, 100%, 70%, ${t.life})`;
+      this.ctx.strokeStyle = `hsla(0, 0%, 0%, ${t.life * 0.5})`;
+      this.ctx.lineWidth = 3;
+      this.ctx.strokeText(t.text, 0, 0);
+      this.ctx.fillText(t.text, 0, 0);
+      this.ctx.restore();
+    }
+    this.floatTexts = this.floatTexts.filter((t) => t.life > 0);
 
     for (const p of this.particles) {
       p.life -= dt / p.maxLife;

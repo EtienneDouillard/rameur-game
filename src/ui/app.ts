@@ -1,25 +1,36 @@
 import type { GameEvent, PlayerId } from "../types/events";
+import type { PlayerCount } from "../types/gameMode";
+import { activePlayers } from "../types/gameMode";
 import { RhythmEngine } from "../events/rhythmEngine";
-import { GameSession, comboLabel, multiplierForCombo, type GameSnapshot } from "../game/gameSession";
+import {
+  GameSession,
+  comboLabel,
+  multiplierForCombo,
+  type GameSnapshot,
+} from "../game/gameSession";
 import { SoundEngine } from "../audio/soundEngine";
 import { PoseVision } from "../vision/poseVision";
 import { startCamera, stopCamera } from "../vision/camera";
 import { ParticleField } from "./particles";
+import { VideoStageFx } from "./videoStageFx";
 
 export class App {
   private root: HTMLElement;
   private video: HTMLVideoElement;
+  private playerCount: PlayerCount = 2;
   private rhythm = new RhythmEngine();
   private game = new GameSession();
   private sound = new SoundEngine();
   private vision: PoseVision | null = null;
   private particles: ParticleField | null = null;
+  private videoFx: VideoStageFx | null = null;
   private lastCombo: Record<PlayerId, number> = { player1: 0, player2: 0 };
   private calibDone: Record<PlayerId, boolean> = { player1: false, player2: false };
   private lastFrameAt = 0;
   private frameCount = 0;
   private animHandle = 0;
   private prevSnap: GameSnapshot | null = null;
+  private lastPoints: Record<PlayerId, number> = { player1: 0, player2: 0 };
 
   constructor(root: HTMLElement, video: HTMLVideoElement) {
     this.root = root;
@@ -29,10 +40,17 @@ export class App {
 
   private renderShell(): void {
     this.root.innerHTML = `
-      <div class="rb">
+      <div class="rb rb--2p" data-rb>
+        <div class="rb-video-stage">
+          <div class="rb-video-slot"></div>
+          <div class="rb-video-fx" data-video-fx></div>
+          <canvas class="rb-video-rings" aria-hidden="true"></canvas>
+          <div class="rb-video-scanlines" aria-hidden="true"></div>
+          <div class="rb-video-divider" data-video-divider aria-hidden="true"></div>
+        </div>
         <canvas class="rb-particles" aria-hidden="true"></canvas>
         <header class="rb-header">
-          <div class="rb-player rb-player--left">
+          <div class="rb-player rb-player--left" data-panel="p1">
             <div class="rb-score" data-score="p1">0</div>
             <div class="rb-combo" data-combo="p1"></div>
           </div>
@@ -40,20 +58,26 @@ export class App {
             <div class="rb-timer" data-timer>1:30</div>
             <div class="rb-phase" data-phase>Row Battle</div>
           </div>
-          <div class="rb-player rb-player--right">
+          <div class="rb-player rb-player--right" data-panel="p2">
             <div class="rb-score" data-score="p2">0</div>
             <div class="rb-combo" data-combo="p2"></div>
           </div>
         </header>
         <main class="rb-main">
-          <div class="rb-column rb-column--left">
+          <div class="rb-column rb-column--left" data-col="p1">
             <div class="rb-energy"><div class="rb-energy-fill" data-energy="p1"></div></div>
             <div class="rb-flash" data-flash="p1"></div>
           </div>
           <div class="rb-center">
             <div class="rb-screen rb-screen--active" data-screen="start">
               <h1>ROW BATTLE</h1>
-              <p>Deux rameurs · Une caméra · Zéro capteur</p>
+              <p>Une caméra · Zéro capteur · 100 % navigateur</p>
+              <p class="rb-mode-label">Mode de jeu</p>
+              <div class="rb-mode-picker" role="group" aria-label="Nombre de joueurs">
+                <button type="button" class="rb-mode rb-mode--active" data-mode="1">1 joueur</button>
+                <button type="button" class="rb-mode" data-mode="2">2 joueurs</button>
+              </div>
+              <p class="rb-mode-hint" data-mode-hint>Solo : placez-vous au centre du cadre.</p>
               <p class="rb-privacy">La vidéo reste sur cet appareil.</p>
               <button type="button" class="rb-btn rb-btn--primary" data-action="start">Jouer</button>
               <p class="rb-hint" data-load-status></p>
@@ -62,11 +86,11 @@ export class App {
               <h2>Calibration</h2>
               <p>Ramez normalement pendant <strong>5 secondes</strong></p>
               <div class="rb-calib-bars">
-                <div class="rb-calib-bar"><span data-calib="p1"></span></div>
-                <div class="rb-calib-bar"><span data-calib="p2"></span></div>
+                <div class="rb-calib-bar" data-calib-wrap="p1"><span data-calib="p1"></span></div>
+                <div class="rb-calib-bar" data-calib-wrap="p2"><span data-calib="p2"></span></div>
               </div>
             </div>
-            <div class="rb-screen" data-screen="play">
+            <div class="rb-screen rb-screen--play" data-screen="play">
               <p class="rb-play-hint">Gardez le rythme !</p>
             </div>
             <div class="rb-screen" data-screen="end">
@@ -78,7 +102,7 @@ export class App {
               <button type="button" class="rb-btn rb-btn--primary" data-action="replay">Rejouer</button>
             </div>
           </div>
-          <div class="rb-column rb-column--right">
+          <div class="rb-column rb-column--right" data-col="p2">
             <div class="rb-energy"><div class="rb-energy-fill" data-energy="p2"></div></div>
             <div class="rb-flash" data-flash="p2"></div>
           </div>
@@ -87,10 +111,32 @@ export class App {
       </div>
     `;
 
+    const slot = this.root.querySelector<HTMLElement>(".rb-video-slot")!;
+    slot.appendChild(this.video);
+    this.video.className = "rb-video";
+    this.video.playsInline = true;
+    this.video.muted = true;
+    this.video.autoplay = true;
+    this.video.removeAttribute("hidden");
+
+    const rb = this.root.querySelector<HTMLElement>("[data-rb]")!;
     const canvas = this.root.querySelector<HTMLCanvasElement>(".rb-particles")!;
+    const rings = this.root.querySelector<HTMLCanvasElement>(".rb-video-rings")!;
+    const overlay = this.root.querySelector<HTMLElement>("[data-video-fx]")!;
     this.particles = new ParticleField(canvas);
-    window.addEventListener("resize", () => this.particles?.resize());
-    this.particles.resize();
+    this.videoFx = new VideoStageFx(rb, overlay!, rings!);
+
+    const resize = () => {
+      this.particles?.resize();
+      this.videoFx?.resize();
+    };
+    window.addEventListener("resize", resize);
+    resize();
+
+    this.root.querySelectorAll<HTMLButtonElement>("[data-mode]").forEach((btn) => {
+      btn.onclick = () => this.setPlayerCount(Number(btn.dataset.mode) as PlayerCount);
+    });
+    this.setPlayerCount(1);
 
     this.root.querySelector<HTMLButtonElement>('[data-action="start"]')!.onclick = () =>
       void this.boot();
@@ -98,10 +144,30 @@ export class App {
       void this.replay();
   }
 
+  private setPlayerCount(count: PlayerCount): void {
+    this.playerCount = count;
+    const rb = this.root.querySelector<HTMLElement>("[data-rb]")!;
+    rb.classList.toggle("rb--1p", count === 1);
+    rb.classList.toggle("rb--2p", count === 2);
+
+    this.root.querySelectorAll<HTMLButtonElement>("[data-mode]").forEach((btn) => {
+      btn.classList.toggle("rb-mode--active", Number(btn.dataset.mode) === count);
+    });
+
+    const hint = this.root.querySelector<HTMLElement>("[data-mode-hint]")!;
+    hint.textContent =
+      count === 1
+        ? "Solo : placez-vous au centre du cadre."
+        : "Duo : joueur 1 à gauche, joueur 2 à droite.";
+  }
+
   private showScreen(name: "start" | "calib" | "play" | "end"): void {
     this.root.querySelectorAll<HTMLElement>(".rb-screen").forEach((el) => {
       el.classList.toggle("rb-screen--active", el.dataset.screen === name);
     });
+    const rb = this.root.querySelector<HTMLElement>("[data-rb]")!;
+    rb.classList.toggle("rb--live", name === "calib" || name === "play");
+    rb.classList.toggle("rb--overlay-light", name === "start" || name === "end");
   }
 
   private async boot(): Promise<void> {
@@ -121,6 +187,7 @@ export class App {
       this.frameCount++;
       this.rhythm.ingest(frames);
     });
+    this.vision.setPlayerCount(this.playerCount);
 
     try {
       await this.vision.init();
@@ -145,6 +212,8 @@ export class App {
     this.game.onSnapshot((snap) => {
       this.updateHud(snap);
       this.checkComboChanges(snap);
+      this.checkScorePopups(snap);
+      this.updateVideoComboFx(snap);
       if (snap.phase === "finished" && this.prevSnap?.phase === "playing") {
         this.onGameEnd(snap);
       }
@@ -153,12 +222,20 @@ export class App {
   }
 
   private beginMatch(): void {
+    this.multiposeTried = false;
     this.calibDone = { player1: false, player2: false };
     this.lastCombo = { player1: 0, player2: 0 };
+    this.lastPoints = { player1: 0, player2: 0 };
+    this.vision?.setPlayerCount(this.playerCount);
     this.showScreen("calib");
     this.setPhaseText("Calibration…");
-    this.game.beginCalibration();
-    this.rhythm.startCalibration();
+    this.game.beginCalibration(this.playerCount);
+    this.rhythm.startCalibration(this.playerCount);
+  }
+
+  private calibrationComplete(): boolean {
+    const needed = activePlayers(this.playerCount);
+    return needed.every((p) => this.calibDone[p]);
   }
 
   private onRhythmEvent(ev: GameEvent): void {
@@ -169,13 +246,14 @@ export class App {
     }
     if (ev.type === "CalibrationDone") {
       this.calibDone[ev.player] = true;
-      if (this.calibDone.player1 && this.calibDone.player2) {
+      if (this.calibrationComplete()) {
         this.showScreen("play");
         this.setPhaseText("C’est parti !");
         this.game.startPlaying();
       }
     }
     if (ev.type === "StrokeDetected" && this.game.getPhase() === "playing") {
+      if (this.playerCount === 1 && ev.player !== "player1") return;
       this.onStroke(ev.player, ev.strength);
     }
     if (ev.type === "ComboLost" && this.game.getPhase() === "playing") {
@@ -186,27 +264,68 @@ export class App {
 
   private onStroke(player: PlayerId, strength: number): void {
     const snap = this.game.getSnapshot();
-    const combo = player === "player1" ? snap.player1.combo : snap.player2.combo;
-    const mult = multiplierForCombo(combo);
+    const stats = player === "player1" ? snap.player1 : snap.player2;
+    const mult = multiplierForCombo(stats.combo);
     this.sound.playStroke(mult);
     this.flashPlayer(player, "hit", strength);
 
+    const side = this.playerSide(player);
+    this.videoFx?.punch(side, strength);
+    this.particles?.streak(side);
+
+    const { x, y } = this.effectCoords(player);
+    this.particles?.burst(x, y, strength * (mult >= 5 ? 1.8 : 1), side);
+    if (mult >= 10) this.particles?.flashScreen(1);
+    else if (mult >= 5) this.particles?.burst(x, y, 1.2, side);
+  }
+
+  private playerSide(player: PlayerId): "left" | "right" | "center" {
+    if (this.playerCount === 1) return "center";
+    return player === "player1" ? "left" : "right";
+  }
+
+  private effectCoords(player: PlayerId): { x: number; y: number } {
+    const rb = this.root.querySelector(".rb")!.getBoundingClientRect();
+    if (this.playerCount === 1) {
+      return { x: rb.width * 0.5, y: rb.height * 0.55 };
+    }
     const col = this.root.querySelector<HTMLElement>(
       player === "player1" ? ".rb-column--left" : ".rb-column--right",
-    );
-    if (col && this.particles) {
-      const rect = col.getBoundingClientRect();
-      const parent = this.root.querySelector(".rb")!.getBoundingClientRect();
-      const x = rect.left - parent.left + rect.width / 2;
-      const y = rect.top - parent.top + rect.height * 0.6;
-      this.particles.burst(x, y, strength * (mult >= 5 ? 1.8 : 1), player === "player1" ? "left" : "right");
-      if (mult >= 10) this.particles.flashScreen(1);
-      else if (mult >= 5) this.particles.burst(x, y, 1.2, player === "player1" ? "left" : "right");
+    )!;
+    const rect = col.getBoundingClientRect();
+    return {
+      x: rect.left - rb.left + rect.width / 2,
+      y: rect.top - rb.top + rect.height * 0.6,
+    };
+  }
+
+  private checkScorePopups(snap: GameSnapshot): void {
+    for (const player of activePlayers(this.playerCount)) {
+      const stats = player === "player1" ? snap.player1 : snap.player2;
+      const delta = stats.score - this.lastPoints[player];
+      if (delta > 0 && snap.phase === "playing") {
+        const { x, y } = this.effectCoords(player);
+        const hue = player === "player1" ? 195 : 320;
+        this.particles?.scorePopup(x, y - 30, `+${delta}`, hue);
+      }
+      this.lastPoints[player] = stats.score;
     }
   }
 
+  private updateVideoComboFx(snap: GameSnapshot): void {
+    if (snap.phase !== "playing") {
+      this.videoFx?.setComboLevel(0);
+      return;
+    }
+    const c1 = snap.player1.combo;
+    const c2 = this.playerCount === 2 ? snap.player2.combo : 0;
+    const max = Math.max(c1, c2);
+    const level = multiplierForCombo(max);
+    this.videoFx?.setComboLevel(level);
+  }
+
   private checkComboChanges(snap: GameSnapshot): void {
-    for (const player of ["player1", "player2"] as const) {
+    for (const player of activePlayers(this.playerCount)) {
       const combo = player === "player1" ? snap.player1.combo : snap.player2.combo;
       const prev = this.lastCombo[player];
       if (combo > prev && combo >= 3) {
@@ -255,16 +374,24 @@ export class App {
   private onGameEnd(snap: GameSnapshot): void {
     this.sound.playVictory();
     this.showScreen("end");
-    const winner =
-      snap.player1.score > snap.player2.score
-        ? "Joueur 1 gagne !"
-        : snap.player2.score > snap.player1.score
-          ? "Joueur 2 gagne !"
-          : "Égalité !";
-    this.root.querySelector<HTMLElement>("[data-winner]")!.textContent = winner;
-
-    this.fillResult("p1", "Joueur 1", snap.player1, "player1");
-    this.fillResult("p2", "Joueur 2", snap.player2, "player2");
+    if (this.playerCount === 1) {
+      this.root.querySelector<HTMLElement>("[data-winner]")!.textContent = "Partie terminée !";
+      this.fillResult("p1", "Joueur", snap.player1, "player1");
+      const p2card = this.root.querySelector<HTMLElement>('[data-result="p2"]')!;
+      p2card.innerHTML = "";
+      p2card.hidden = true;
+    } else {
+      const winner =
+        snap.player1.score > snap.player2.score
+          ? "Joueur 1 gagne !"
+          : snap.player2.score > snap.player1.score
+            ? "Joueur 2 gagne !"
+            : "Égalité !";
+      this.root.querySelector<HTMLElement>("[data-winner]")!.textContent = winner;
+      this.fillResult("p1", "Joueur 1", snap.player1, "player1");
+      this.fillResult("p2", "Joueur 2", snap.player2, "player2");
+      this.root.querySelector<HTMLElement>('[data-result="p2"]')!.hidden = false;
+    }
     this.setPhaseText("Fin de partie");
     this.vision?.stop();
   }
@@ -276,6 +403,7 @@ export class App {
     player: PlayerId,
   ): void {
     const el = this.root.querySelector<HTMLElement>(`[data-result="${key}"]`)!;
+    el.hidden = false;
     el.innerHTML = `
       <h3>${label}</h3>
       <div class="rb-stat"><span>Score</span><strong>${stats.score}</strong></div>
@@ -297,6 +425,7 @@ export class App {
       const dt = (now - last) / 1000;
       last = now;
       this.particles?.tick(dt);
+      this.videoFx?.tick(dt);
 
       if (now - this.lastFrameAt > 1000) {
         const fps = this.frameCount;

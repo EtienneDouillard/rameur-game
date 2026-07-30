@@ -2,8 +2,8 @@ import * as poseDetection from "@tensorflow-models/pose-detection";
 import type { PlayerId, PlayerPoseFrame, PoseLandmark } from "../types/events";
 import { initTfBackend } from "./backends";
 
-const ROI_LEFT = { x0: 0, x1: 0.48 };
-const ROI_RIGHT = { x0: 0.52, x1: 1 };
+import type { PlayerCount } from "../types/gameMode";
+import { ROI_LEFT, ROI_RIGHT, ROI_SOLO } from "../types/gameMode";
 
 export type PoseFrameCallback = (frames: PlayerPoseFrame[]) => void;
 
@@ -16,6 +16,7 @@ export class PoseVision {
   private cropCanvas: HTMLCanvasElement;
   private onFrame: PoseFrameCallback;
   private backend = "";
+  private playerCount: PlayerCount = 2;
 
   constructor(video: HTMLVideoElement, onFrame: PoseFrameCallback) {
     this.video = video;
@@ -28,6 +29,10 @@ export class PoseVision {
 
   getBackend(): string {
     return this.backend;
+  }
+
+  setPlayerCount(count: PlayerCount): void {
+    this.playerCount = count;
   }
 
   async init(): Promise<void> {
@@ -105,16 +110,19 @@ export class PoseVision {
 
     if (this.multipose) {
       const poses = await detector.estimatePoses(this.fullCanvas, { flipHorizontal: true });
-      const assigned = assignMultipose(poses, vw, vh);
+      const assigned = assignMultipose(poses, vw, vh, this.playerCount);
       for (const [player, landmarks] of assigned) {
         if (landmarks.length) frames.push({ player, landmarks, timestamp });
       }
     } else {
-      const players: { player: PlayerId; roi: typeof ROI_LEFT }[] = [
-        { player: "player1", roi: ROI_LEFT },
-        { player: "player2", roi: ROI_RIGHT },
-      ];
-      for (const { player, roi } of players) {
+      const rois: { player: PlayerId; roi: { x0: number; x1: number } }[] =
+        this.playerCount === 1
+          ? [{ player: "player1", roi: ROI_SOLO }]
+          : [
+              { player: "player1", roi: ROI_LEFT },
+              { player: "player2", roi: ROI_RIGHT },
+            ];
+      for (const { player, roi } of rois) {
         const landmarks = await this.estimateRoi(ctx, vw, vh, roi, detector);
         frames.push({ player, landmarks, timestamp });
       }
@@ -154,6 +162,7 @@ function assignMultipose(
   poses: poseDetection.Pose[],
   frameWidth: number,
   frameHeight: number,
+  playerCount: PlayerCount,
 ): Map<PlayerId, PoseLandmark[]> {
   const result = new Map<PlayerId, PoseLandmark[]>([
     ["player1", []],
@@ -181,7 +190,7 @@ function assignMultipose(
   if (scored.length >= 1) {
     result.set("player1", scored[0].kps.map(norm));
   }
-  if (scored.length >= 2) {
+  if (playerCount === 2 && scored.length >= 2) {
     result.set("player2", scored[1].kps.map(norm));
   }
 

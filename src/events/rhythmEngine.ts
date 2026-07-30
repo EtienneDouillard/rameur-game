@@ -5,6 +5,7 @@ import type {
   PlayerPoseFrame,
   PlayerRhythmProfile,
 } from "../types/events";
+import { activePlayers, type PlayerCount } from "../types/gameMode";
 import { extractFeatures } from "./features";
 import { OneEuroFilter } from "./oneEuro";
 
@@ -28,6 +29,7 @@ export class RhythmEngine {
   private players: Record<PlayerId, PlayerState>;
   private calibrating = false;
   private calibStart = 0;
+  private enabled: PlayerId[] = ["player1", "player2"];
 
   constructor() {
     this.players = {
@@ -60,7 +62,8 @@ export class RhythmEngine {
     for (const l of this.listeners) l(event);
   }
 
-  startCalibration(): void {
+  startCalibration(playerCount: PlayerCount = 2): void {
+    this.enabled = activePlayers(playerCount);
     this.calibrating = true;
     this.calibStart = performance.now();
     for (const id of ["player1", "player2"] as const) {
@@ -83,6 +86,7 @@ export class RhythmEngine {
     const now = performance.now();
 
     for (const frame of frames) {
+      if (!this.enabled.includes(frame.player)) continue;
       const p = this.players[frame.player];
       const feat = extractFeatures(frame.landmarks);
       if (!feat.valid) continue;
@@ -145,7 +149,7 @@ export class RhythmEngine {
 
   private finishCalibration(now: number): void {
     this.calibrating = false;
-    for (const player of ["player1", "player2"] as const) {
+    for (const player of this.enabled) {
       const p = this.players[player];
       const intervals = p.strokeIntervals.filter((i) => i > 400 && i < 2500);
       const periodMs =
@@ -173,6 +177,15 @@ export class RhythmEngine {
       p.lastStrokeAt = 0;
       p.refractoryUntil = now + periodMs * 0.35;
       this.emit({ type: "CalibrationDone", player, profile });
+    }
+    for (const player of ["player1", "player2"] as const) {
+      if (this.enabled.includes(player)) continue;
+      const profile: PlayerRhythmProfile = {
+        periodMs: 1100,
+        amplitudeNorm: 0.15,
+        thresholds: { stroke: 0.012, idle: 0.004 },
+      };
+      this.players[player].profile = profile;
     }
   }
 
