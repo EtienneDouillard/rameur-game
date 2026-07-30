@@ -433,7 +433,7 @@ body {
 }
 
 .rb-flow-badge {
-  display: inline-block;
+  display: none;
   margin-top: 0.2rem;
   padding: 0.2rem 0.65rem;
   font-family: var(--font-display);
@@ -443,6 +443,10 @@ body {
   background: linear-gradient(90deg, var(--cyan), var(--gold));
   border-radius: 4px;
   animation: flow-badge-pulse 0.8s ease-in-out infinite;
+}
+
+.rb-flow-badge:not([hidden]) {
+  display: inline-block;
 }
 
 .rb-flow-badge--over {

@@ -80,8 +80,8 @@ export class FlowController {
         return 1;
       }
     } else if (s.charge > 0) {
-      // Une erreur ne remonte pas à 0 : on perd 1 cran seulement
-      s.charge = Math.max(0, s.charge - 1);
+      // Hors fenêtre flow : la série 7/7 repart à zéro
+      s.charge = 0;
     }
 
     return 1;
@@ -108,25 +108,25 @@ export class FlowController {
 
   getSnapshot(player: PlayerId): FlowSnapshot {
     const s = this.state[player];
-    const inFlow = s.inFlow && s.boostLeft > 0;
+    const inBoost = s.inFlow && s.boostLeft > 0;
 
     let barFill: number;
-    if (inFlow) {
+    if (inBoost) {
       barFill = s.boostLeft / FLOW_BOOST_STROKES;
     } else {
       barFill = s.charge / FLOW_CHARGE_STROKES;
     }
 
-    const intensity = inFlow ? 0.55 + (s.boostLeft / FLOW_BOOST_STROKES) * 0.45 : barFill * 0.5;
+    const intensity = inBoost ? 0.55 + (s.boostLeft / FLOW_BOOST_STROKES) * 0.45 : barFill * 0.5;
 
     return {
       barFill,
-      inFlow,
+      inFlow: inBoost,
       chargeProgress: s.charge,
       chargeRequired: FLOW_CHARGE_STROKES,
-      boostStrokesLeft: inFlow ? s.boostLeft : 0,
+      boostStrokesLeft: inBoost ? s.boostLeft : 0,
       boostStrokesTotal: FLOW_BOOST_STROKES,
-      scoreMultiplier: inFlow ? FLOW_SCORE_MULT : 1,
+      scoreMultiplier: inBoost ? FLOW_SCORE_MULT : 1,
       intensity,
     };
   }

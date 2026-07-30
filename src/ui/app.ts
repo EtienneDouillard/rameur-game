@@ -17,7 +17,7 @@ import { VideoStageFx } from "./videoStageFx";
 import { CameraRig } from "./cameraRig";
 import { BackgroundMusic } from "../audio/backgroundMusic";
 import { loadAudioPrefs, saveAudioPrefs } from "../audio/audioPrefs";
-import { OdysseyVoice, flowBadgeLabel } from "./odysseyVoice";
+import { OdysseyVoice } from "./odysseyVoice";
 import {
   DEFAULT_MATCH_DURATION_SEC,
   formatMatchTimer,
@@ -417,7 +417,7 @@ export class App {
       this.calibDone[ev.player] = true;
       if (this.calibrationComplete()) {
         this.showScreen("play");
-        this.setPhaseText("C'est parti !");
+        this.setPhaseText("");
         this.game.startPlaying();
         void this.music?.start();
       }
@@ -520,35 +520,43 @@ export class App {
     let anyInFlow = false;
 
     for (const player of activePlayers(this.playerCount)) {
-      const flow = player === "player1" ? snap.player1 : snap.player2;
-      const f = flow.flow;
+      const stats = player === "player1" ? snap.player1 : snap.player2;
+      const f = stats.flow;
       const key = player === "player1" ? "p1" : "p2";
+      const inBoost = f.inFlow && f.boostStrokesLeft > 0;
       const badge = this.root.querySelector<HTMLElement>(`[data-flow="${key}"]`);
       if (badge) {
-        badge.hidden = !f.inFlow;
-        if (f.inFlow) {
-          badge.textContent = flowBadgeLabel(f.boostStrokesLeft, f.boostStrokesTotal);
+        badge.hidden = !inBoost;
+        if (inBoost) {
+          badge.textContent = `VENT ARRIÈRE · ${f.boostStrokesLeft}/${f.boostStrokesTotal}`;
         }
-        badge.classList.toggle("rb-flow-badge--over", f.inFlow);
+        badge.classList.toggle("rb-flow-badge--over", inBoost);
       }
 
-      if (f.inFlow && !this.wasInFlow[player]) {
+      if (inBoost && !this.wasInFlow[player]) {
         justEntered = true;
         this.sound.playFlowEnter();
         this.sound.playOverdrive();
       }
-      if (!f.inFlow && this.wasInFlow[player]) {
+      if (!inBoost && this.wasInFlow[player]) {
         justLeft = true;
         this.sound.playFlowFade();
       }
-      if (f.chargeProgress < this.lastCharge[player] && !f.inFlow && !this.wasInFlow[player]) {
+      if (f.chargeProgress < this.lastCharge[player] && !inBoost && !this.wasInFlow[player]) {
         justBroke = true;
       }
 
-      this.wasInFlow[player] = f.inFlow;
+      this.wasInFlow[player] = inBoost;
       this.lastCharge[player] = f.chargeProgress;
-      bestCharge = Math.max(bestCharge, f.inFlow ? 7 : f.chargeProgress);
-      if (f.inFlow) anyInFlow = true;
+      bestCharge = Math.max(bestCharge, inBoost ? 7 : f.chargeProgress);
+      if (inBoost) anyInFlow = true;
+    }
+
+    for (const key of ["p1", "p2"] as const) {
+      if (this.playerCount === 1 && key === "p2") {
+        const b = this.root.querySelector<HTMLElement>(`[data-flow="${key}"]`);
+        if (b) b.hidden = true;
+      }
     }
 
     const line = this.odyssey.lineFor({
@@ -562,13 +570,15 @@ export class App {
 
     const hint = this.root.querySelector<HTMLElement>("[data-play-hint]");
     if (hint) {
-      if (line) {
+      // Pas de texte central pendant le boost : le badge VENT ARRIÈRE suffit
+      if (line && !anyInFlow) {
         hint.hidden = false;
         hint.textContent = line;
-        hint.classList.toggle("rb-play-hint--flow", anyInFlow);
-        hint.classList.toggle("rb-play-hint--hot", !anyInFlow && bestCharge >= 5);
+        hint.classList.toggle("rb-play-hint--flow", false);
+        hint.classList.toggle("rb-play-hint--hot", bestCharge >= 5);
       } else {
         hint.hidden = true;
+        hint.classList.remove("rb-play-hint--flow", "rb-play-hint--hot");
       }
     }
   }
