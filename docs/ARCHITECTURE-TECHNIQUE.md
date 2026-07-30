@@ -152,7 +152,15 @@ Par joueur, à partir des landmarks MoveNet :
 ### 4.3 Filtrage temporel
 
 - **One Euro Filter** (ou EMA double) sur chaque feature.  
-- Détection de coup : passage de phase (ex. minimum local de `bustCompression` suivi d’un maximum) + **fenêtre refractory** (~40 % de la période calibrée) pour éviter les doubles triggers.
+- Le signal `drive` agrège uniquement des composantes **en phase** (profondeur, écartement
+  des coudes, redressement du buste) : toutes montent du catch vers le finish. Mélanger des
+  mesures en opposition de phase produisait deux bosses par cycle, donc un point à l’aller
+  **et** au retour.
+- Détection de coup : **hystérésis (Schmitt)** sur le signal normalisé par une enveloppe
+  min/max glissante. On compte un point quand la valeur normalisée franchit `0,76` (traction),
+  et il faut redescendre sous `0,30` (retour au catch) pour pouvoir recompter. Un cycle
+  complet = exactement un point, jamais au milieu du mouvement.
+- **Fenêtre refractory** (~40 % de la période calibrée) en garde-fou supplémentaire.
 
 ### 4.4 Calibration automatique (15 s + 10 coups + départ)
 
@@ -186,8 +194,9 @@ La **régularité** (écart à la période attendue) est calculée ici ou dans l
 
 ### 5.2 Score (concept)
 
-- Chaque `StrokeDetected` : `basePoints × multiplier`.  
-- Multiplier : paliers **×1, ×2, ×3, ×5, ×10** selon combo maintenu.  
+- Chaque `StrokeDetected` : `basePoints × multiplier` avec `basePoints = 5`, pour garder
+  des scores lisibles (quelques centaines de points sur une manche de 90 s).  
+- Multiplier : paliers **×1, ×2, ×3, ×4** selon combo maintenu.  
 - Combo ++ si intervalle entre coups ∈ `[period × (1 − ε), period × (1 + ε)]` (ε ~ 15–20 % après calibration).  
 - **Sinon :** combo = 0 immédiatement (`ComboLost`).
 
@@ -229,7 +238,7 @@ Métriques fin de partie :
 | Événement | Feedback |
 |-----------|----------|
 | `StrokeDetected` | flash colonne, particules, tick score, SFX |
-| Combo ↑ | intensité FX (×2 étincelles → ×5 explosion → ×10 écran vivant) |
+| Combo ↑ | intensité FX (×2 étincelles → ×3 explosion → ×4 écran vivant) |
 | `ComboLost` | court « break » visuel (pas punitif au point de frustrer) |
 
 ### 6.3 Fin de partie

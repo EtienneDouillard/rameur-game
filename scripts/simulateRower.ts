@@ -5,6 +5,7 @@
  *   npx tsx scripts/simulateRower.ts
  */
 import { RhythmEngine, CALIBRATION_STROKES } from "../src/events/rhythmEngine";
+import { GameSession } from "../src/game/gameSession";
 import type { GameEvent, PlayerPoseFrame, PoseLandmark } from "../src/types/events";
 
 const FPS = 30;
@@ -13,6 +14,19 @@ const DT = 1000 / FPS;
 let clock = 0;
 (globalThis as { performance?: { now(): number } }).performance = {
   now: () => clock,
+};
+// La boucle d'animation du jeu est pilotée par le pas de simulation.
+const g = globalThis as unknown as {
+  requestAnimationFrame(cb: (t: number) => void): number;
+  cancelAnimationFrame(id: number): void;
+};
+let pendingFrame: (() => void) | null = null;
+g.requestAnimationFrame = (cb) => {
+  pendingFrame = () => cb(clock);
+  return 1;
+};
+g.cancelAnimationFrame = () => {
+  pendingFrame = null;
 };
 
 interface Scenario {
@@ -28,29 +42,51 @@ interface Scenario {
   freezeInGame?: boolean;
 }
 
+/** Part de traction du cycle (le retour est plus lent que la traction) */
+const DRIVE_RATIO = 0.4;
+
+/**
+ * `phase` ∈ [0, 2π). pull = 0 au catch (buste avancé, bras tendus),
+ * 1 au finish (traction terminée, buste reculé, coudes ouverts).
+ */
+function pullness(phase: number): number {
+  const t = (phase / (2 * Math.PI)) % 1;
+  return t < DRIVE_RATIO
+    ? t / DRIVE_RATIO
+    : 1 - (t - DRIVE_RATIO) / (1 - DRIVE_RATIO);
+}
+
 function makeLandmarks(phase: number, amp: number, noise: number): PoseLandmark[] {
   const n = () => (Math.random() - 0.5) * noise;
-  // Cycle de rame : les poignets montent/descendent, le torse oscille.
-  const pull = (Math.sin(phase) + 1) / 2;
-  const wristY = 0.55 - pull * amp;
-  const elbowY = 0.58 - pull * amp * 0.6;
-  const shoulderY = 0.42 - pull * amp * 0.12;
+  const pull = pullness(phase);
+
+  // Le rameur avance vers la caméra au catch : il paraît plus grand.
+  const size = 1 + (1 - pull) * amp * 1.5;
+  const halfShoulder = 0.08 * size;
+  // Coudes collés au catch, ouverts au finish.
+  const elbowOut = halfShoulder + amp * (0.15 + 0.85 * pull);
+  // Buste redressé au finish : la tête remonte.
+  const shoulderY = 0.44 - pull * amp * 0.1;
+  const noseY = shoulderY - (0.1 + pull * amp * 0.9) * size;
+  const wristY = 0.56 - pull * amp * 0.35;
+
   const kp = (name: string, x: number, y: number): PoseLandmark => ({
     name,
     x: x + n(),
     y: y + n(),
     score: 0.85,
   });
+
   return [
-    kp("nose", 0.5, 0.3 - pull * amp * 0.2),
-    kp("left_shoulder", 0.42, shoulderY),
-    kp("right_shoulder", 0.58, shoulderY),
-    kp("left_elbow", 0.38, elbowY),
-    kp("right_elbow", 0.62, elbowY),
-    kp("left_wrist", 0.44, wristY),
-    kp("right_wrist", 0.56, wristY),
-    kp("left_hip", 0.44, 0.72),
-    kp("right_hip", 0.56, 0.72),
+    kp("nose", 0.5, noseY),
+    kp("left_shoulder", 0.5 - halfShoulder, shoulderY),
+    kp("right_shoulder", 0.5 + halfShoulder, shoulderY),
+    kp("left_elbow", 0.5 - elbowOut, shoulderY + 0.09 * size),
+    kp("right_elbow", 0.5 + elbowOut, shoulderY + 0.09 * size),
+    kp("left_wrist", 0.47, wristY),
+    kp("right_wrist", 0.53, wristY),
+    kp("left_hip", 0.5 - halfShoulder * 0.9, 0.72),
+    kp("right_hip", 0.5 + halfShoulder * 0.9, 0.72),
   ];
 }
 
@@ -60,13 +96,17 @@ function run(scn: Scenario): { ok: boolean; detail: string } {
   let calibStrokes = 0;
   let playStrokes = 0;
   let calibrationDone = false;
+  const pullAtStroke: number[] = [];
 
   engine.on((ev: GameEvent) => {
     if (ev.type === "CalibrationProgress" && ev.phase === "strokes") {
       calibStrokes = Math.max(calibStrokes, ev.strokesDone);
     }
     if (ev.type === "CalibrationDone") calibrationDone = true;
-    if (ev.type === "StrokeDetected") playStrokes++;
+    if (ev.type === "StrokeDetected") {
+      playStrokes++;
+      pullAtStroke.push(pullness(phase));
+    }
   });
 
   engine.startCalibration(1);
@@ -100,12 +140,26 @@ function run(scn: Scenario): { ok: boolean; detail: string } {
     step(playPeriod, scn.freezeInGame ? 0 : scn.amplitude);
   }
 
-  const ok = scn.freezeInGame
-    ? playStrokes === 0
-    : playStrokes / expected >= 0.7 && playStrokes / expected <= 1.3;
+  if (scn.freezeInGame) {
+    return {
+      ok: playStrokes === 0,
+      detail: `calib ${calibStrokes}/${CALIBRATION_STROKES} · jeu ${playStrokes} coups (attendu ~0)`,
+    };
+  }
+
+  // Un seul point par cycle, et il doit tomber pendant la traction.
+  const ratio = playStrokes / expected;
+  const countOk = ratio >= 0.85 && ratio <= 1.15;
+  const meanPull =
+    pullAtStroke.reduce((a, b) => a + b, 0) / Math.max(1, pullAtStroke.length);
+  // > 0.5 ⇒ le point tombe pendant la traction, jamais pendant le retour.
+  const phaseOk = meanPull >= 0.65;
+
   return {
-    ok,
-    detail: `calib ${calibStrokes}/${CALIBRATION_STROKES} · jeu ${playStrokes} coups (attendu ~${expected})`,
+    ok: countOk && phaseOk,
+    detail:
+      `calib ${calibStrokes}/${CALIBRATION_STROKES} · jeu ${playStrokes} coups ` +
+      `(attendu ~${expected}) · traction ${(meanPull * 100).toFixed(0)}%`,
   };
 }
 
@@ -209,6 +263,49 @@ for (const scn of scenarios) {
 const duo = runDuo();
 if (!duo.ok) failures++;
 console.log(`${duo.ok ? "OK  " : "FAIL"} ${"duo, rythmes différents".padEnd(32)} ${duo.detail}`);
+
+/** Le score d'une partie doit rester lisible (3 chiffres, pas 5). */
+function runScore(): { ok: boolean; detail: string } {
+  clock = 0;
+  const engine = new RhythmEngine();
+  const game = new GameSession();
+  let calibrationDone = false;
+
+  engine.on((ev: GameEvent) => {
+    if (ev.type === "CalibrationDone") calibrationDone = true;
+    game.onGameEvent(ev);
+  });
+
+  engine.startCalibration(1);
+  game.beginCalibration(1, 90);
+
+  let phase = 0;
+  const step = (amplitude: number) => {
+    // ~28 coups/minute, cadence réaliste sur ergomètre
+    if (amplitude > 0) phase += (2 * Math.PI * DT) / 2100;
+    engine.ingest([
+      { player: "player1", landmarks: makeLandmarks(phase, amplitude, 0.005), timestamp: clock },
+    ]);
+    clock += DT;
+    const frame = pendingFrame;
+    pendingFrame = null;
+    frame?.();
+  };
+
+  for (let i = 0; i < 15 * FPS; i++) step(0);
+  for (let i = 0; i < 40 * FPS && !calibrationDone; i++) step(0.16);
+  game.startPlaying();
+  for (let i = 0; i < 89 * FPS; i++) step(0.16);
+
+  const score = game.getSnapshot().player1.score;
+  game.stop();
+  const ok = score > 0 && score < 1000;
+  return { ok, detail: `90 s à 28 coups/min → ${score} points` };
+}
+
+const scoring = runScore();
+if (!scoring.ok) failures++;
+console.log(`${scoring.ok ? "OK  " : "FAIL"} ${"score lisible".padEnd(32)} ${scoring.detail}`);
 
 if (failures > 0) {
   console.error(`\n${failures} scénario(s) en échec`);

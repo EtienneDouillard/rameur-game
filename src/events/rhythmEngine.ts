@@ -26,15 +26,27 @@ const BASELINE_LERP = 0.04;
 const AUTOTUNE_WINDOW_MS = 4000;
 const AUTOTUNE_MIN_AMP_FLOOR = 0.025;
 const AUTOTUNE_VEL_FLOOR = 0.07;
+/**
+ * Hystérésis du cycle de rame : on ne compte qu'en montant vers le finish,
+ * et il faut être redescendu au catch pour pouvoir recompter.
+ */
+const SCHMITT_HIGH = 0.76;
+const SCHMITT_LOW = 0.3;
+/** Vitesse de rétraction de l'enveloppe (par seconde, en fraction de l'amplitude) */
+const ENVELOPE_DECAY_PER_SEC = 0.22;
+/** Amplitude minimale acceptée pendant l'essai des rames */
+const CALIB_MIN_AMP = 0.03;
 
 interface PlayerState {
   filter: OneEuroFilter;
   velFilter: OneEuroFilter;
   prevDrive: number;
   prevTime: number;
-  phase: "rising" | "falling";
-  cyclePeak: number;
-  cycleTrough: number;
+  /** "catch" = prêt à compter la traction, "drive" = traction comptée, on attend le retour */
+  cycleState: "catch" | "drive";
+  /** Enveloppe adaptative du signal (min/max glissants) */
+  envMin: number;
+  envMax: number;
   lastStrokeAt: number;
   strokeIntervals: number[];
   calibSamples: number[];
@@ -80,9 +92,9 @@ export class RhythmEngine {
       velFilter: new OneEuroFilter(1.9, 0.075, 1),
       prevDrive: 0,
       prevTime: 0,
-      phase: "rising",
-      cyclePeak: -Infinity,
-      cycleTrough: Infinity,
+      cycleState: "catch",
+      envMin: Infinity,
+      envMax: -Infinity,
       lastStrokeAt: 0,
       strokeIntervals: [],
       calibSamples: [],
@@ -139,9 +151,9 @@ export class RhythmEngine {
       p.windowStrokes = 0;
       p.profile = null;
       p.strokeIntervals = [];
-      p.phase = "rising";
-      p.cyclePeak = -Infinity;
-      p.cycleTrough = Infinity;
+      p.cycleState = "catch";
+      p.envMin = Infinity;
+      p.envMax = -Infinity;
       p.active = false;
       p.prevTime = 0;
       p.prevDrive = 0;
@@ -181,12 +193,13 @@ export class RhythmEngine {
   getDiagnostics(player: PlayerId): string {
     const p = this.players[player];
     if (!p.profile) return "calib";
-    const span = p.windowMax - p.windowMin;
+    const range = p.envMax - p.envMin;
+    const norm = range > 0 ? (p.prevDrive - p.driveBaseline - p.envMin) / range : 0;
     return [
-      `amp:${span.toFixed(3)}`,
+      `amp:${range.toFixed(3)}`,
       `min:${p.profile.minStrokeAmp.toFixed(3)}`,
-      `v:${Math.abs(p.velocity).toFixed(2)}`,
-      `vth:${p.profile.thresholds.stroke.toFixed(2)}`,
+      `n:${norm.toFixed(2)}`,
+      p.cycleState === "drive" ? "tirage" : "retour",
       p.active ? "ON" : "off",
     ].join(" ");
   }
@@ -252,7 +265,7 @@ export class RhythmEngine {
         }
 
         p.calibSamples.push(drive);
-        this.detectStroke(p, drive, now, frame.player, true);
+        this.detectStroke(p, drive, dtSec, now, frame.player, true);
         continue;
       }
 
@@ -271,73 +284,39 @@ export class RhythmEngine {
         p.active = false;
         this.emit({ type: "PlayerIdle", player: frame.player, at: now });
         this.emit({ type: "ComboLost", player: frame.player, at: now });
-        p.phase = "rising";
-        p.cyclePeak = drive;
-        p.cycleTrough = drive;
+        p.cycleState = "catch";
       }
 
-      this.detectStroke(p, drive, now, frame.player, false);
+      this.detectStroke(p, drive, dtSec, now, frame.player, false);
     }
   }
 
+  /**
+   * Un cycle de rame = une traction + un retour. On compte UN point, au
+   * moment de la traction (le signal atteint le haut de sa course), puis
+   * plus rien tant que le rameur n'est pas revenu au catch.
+   */
   private detectStroke(
     p: PlayerState,
     drive: number,
+    dtSec: number,
     now: number,
     player: PlayerId,
     isCalib: boolean,
   ): void {
     const prof = p.profile;
-    const vUp = isCalib
-      ? 0.15
-      : Math.max(0.06, prof!.thresholds.stroke * 0.9);
-    const vDown = isCalib
-      ? -0.12
-      : -Math.max(0.05, prof!.thresholds.stroke * 0.7);
-    const minAmp = isCalib ? 0.035 : prof!.minStrokeAmp;
+    const minAmp = isCalib ? CALIB_MIN_AMP : prof!.minStrokeAmp;
 
-    const canFire =
-      now >= p.refractoryUntil &&
-      (p.lastStrokeAt <= 0 || now - p.lastStrokeAt >= MIN_STROKE_GAP_MS);
-
-    if (p.phase === "rising") {
-      p.cyclePeak = Math.max(p.cyclePeak, drive);
-      p.cycleTrough = Math.min(p.cycleTrough, drive);
-
-      const span = p.cyclePeak - p.cycleTrough;
-      const dropFromPeak = p.cyclePeak - drive;
-
-      if (
-        canFire &&
-        p.velocity < vDown &&
-        span >= minAmp &&
-        dropFromPeak >= minAmp * 0.38
-      ) {
-        this.fireStroke(p, drive, now, player, isCalib);
-        p.phase = "falling";
-        p.cycleTrough = drive;
-        return;
-      }
-
-      // Chemin rapide uniquement en calibration
-      if (
-        isCalib &&
-        canFire &&
-        p.velocity < vDown * 1.5 &&
-        dropFromPeak >= minAmp * 0.28
-      ) {
-        this.fireStroke(p, drive, now, player, true);
-        p.phase = "falling";
-        p.cycleTrough = drive;
-      }
+    if (!isFinite(p.envMax) || !isFinite(p.envMin) || p.envMax < p.envMin) {
+      p.envMax = drive;
+      p.envMin = drive;
     } else {
-      p.cycleTrough = Math.min(p.cycleTrough, drive);
-      if (p.velocity > vUp * 0.55 && drive - p.cycleTrough >= minAmp * 0.22) {
-        p.phase = "rising";
-        p.cyclePeak = drive;
-        p.cycleTrough = drive;
-      }
+      const shrink = (p.envMax - p.envMin) * ENVELOPE_DECAY_PER_SEC * dtSec;
+      p.envMax = Math.max(drive, p.envMax - shrink);
+      p.envMin = Math.min(drive, p.envMin + shrink);
     }
+
+    const range = p.envMax - p.envMin;
 
     if (
       !isCalib &&
@@ -349,36 +328,44 @@ export class RhythmEngine {
       p.active = false;
       this.emit({ type: "PlayerIdle", player, at: now });
       this.emit({ type: "ComboLost", player, at: now });
-      p.phase = "rising";
-      p.cyclePeak = drive;
-      p.cycleTrough = drive;
+      p.cycleState = "catch";
+    }
+
+    // Oscillation trop faible : on est à l'arrêt, aucun coup possible.
+    if (range < minAmp) return;
+
+    const norm = (drive - p.envMin) / range;
+
+    if (p.cycleState === "drive") {
+      if (norm <= SCHMITT_LOW) p.cycleState = "catch";
+      return;
+    }
+
+    const canFire =
+      now >= p.refractoryUntil &&
+      (p.lastStrokeAt <= 0 || now - p.lastStrokeAt >= MIN_STROKE_GAP_MS);
+
+    if (norm >= SCHMITT_HIGH && canFire) {
+      this.fireStroke(p, range, now, player, isCalib);
+      p.cycleState = "drive";
     }
   }
 
   private fireStroke(
     p: PlayerState,
-    _drive: number,
+    amplitude: number,
     now: number,
     player: PlayerId,
     isCalib: boolean,
   ): void {
-    const amp = Math.max(0.01, p.cyclePeak - p.cycleTrough);
+    const amp = Math.max(0.01, amplitude);
 
-    if (!isCalib && p.profile) {
-      if (amp < p.profile.minStrokeAmp) {
-        p.phase = "rising";
-        p.cyclePeak = _drive;
-        p.cycleTrough = _drive;
-        return;
-      }
-      // Un coup d'amplitude franche réveille le joueur : on ne perd
+    if (!isCalib && p.profile && !p.active) {
+      // Une traction d'amplitude franche réveille le joueur : on ne perd
       // jamais un vrai mouvement à cause du drapeau d'activité.
-      if (!p.active) {
-        if (amp < p.profile.minStrokeAmp * 1.4) return;
-        p.active = true;
-        p.lastMotionAt = now;
-        this.emit({ type: "PlayerActive", player, at: now });
-      }
+      p.active = true;
+      p.lastMotionAt = now;
+      this.emit({ type: "PlayerActive", player, at: now });
     }
 
     if (isCalib) {
@@ -501,9 +488,9 @@ export class RhythmEngine {
     p.driveBaseline =
       idle.length >= 8 ? median(idle.slice(-60)) : p.driveBaseline;
     p.calibIdleDone = true;
-    p.phase = "rising";
-    p.cyclePeak = drive;
-    p.cycleTrough = drive;
+    p.cycleState = "catch";
+    p.envMin = drive;
+    p.envMax = drive;
   }
 
   private finishPlayerCalibration(player: PlayerId, now: number): void {
@@ -562,9 +549,9 @@ export class RhythmEngine {
     p.profile = profile;
     p.lastStrokeAt = 0;
     p.refractoryUntil = now + REFRACTORY_MIN_MS;
-    p.phase = "rising";
-    p.cyclePeak = -Infinity;
-    p.cycleTrough = Infinity;
+    p.cycleState = "catch";
+    p.envMin = Infinity;
+    p.envMax = -Infinity;
     p.active = false;
     this.emitCalibProgress(player, 1, "ready", CALIBRATION_STROKES);
     this.emit({ type: "CalibrationDone", player, profile });

@@ -29,7 +29,7 @@ function clampRange(n: number, lo: number, hi: number): number {
 }
 
 export interface MotionFeatures {
-  /** Signal composite : oscille avec le cycle de rame (face caméra) */
+  /** Signal orienté : croît pendant la traction, décroît au retour */
   drive: number;
   shoulderWidth: number;
   valid: boolean;
@@ -38,9 +38,12 @@ export interface MotionFeatures {
 }
 
 /**
- * Features pour rameur FILMÉ DE FACE.
- * Priorité aux bras / traction (signal qui oscille vraiment),
- * profondeur et torse en soutien — moins de biais sur la posture figée.
+ * Rameur FILMÉ DE FACE (ergomètre ou mouvement mimé).
+ *
+ * Toutes les composantes sont orientées dans le MÊME sens : elles montent du
+ * catch (buste en avant, bras tendus) vers le finish (traction terminée).
+ * Mélanger des signaux en opposition de phase créait deux bosses par cycle,
+ * donc un point à l'aller ET au retour.
  */
 export function extractFeatures(landmarks: PoseLandmark[]): MotionFeatures {
   if (!landmarks.length) {
@@ -60,12 +63,11 @@ export function extractFeatures(landmarks: PoseLandmark[]): MotionFeatures {
   const shoulders = mid(ls, rs);
   const hips = mid(lh, rh);
   const wrists = mid(lw, rw);
-  const elbows = mid(le, re);
 
   let shoulderWidth = 0;
   if (ls && rs) shoulderWidth = dist(ls, rs);
   else if (lh && rh) shoulderWidth = dist(lh, rh) * 1.15;
-  else if (shoulders && hips) shoulderWidth = Math.abs(shoulders.x - hips.x) * 2 + 0.08;
+  else if (shoulders && hips) shoulderWidth = Math.abs(shoulders.y - hips.y) * 0.7;
 
   if (!shoulders && !hips && !nose) {
     return { drive: 0, shoulderWidth: 0, valid: false, confidence: 0 };
@@ -73,55 +75,40 @@ export function extractFeatures(landmarks: PoseLandmark[]): MotionFeatures {
 
   const scale = Math.max(0.04, shoulderWidth || 0.12);
 
-  // 1) Profondeur (avancée → épaules plus larges) — utile mais bruité
-  const depth = Math.min(1.35, scale / 0.22);
+  // 1) Profondeur : au catch le rameur est avancé (plus grand à l'image),
+  //    au finish il est reculé (plus petit). Signe négatif → croît au finish.
+  const depth = -Math.min(1.6, scale / 0.22);
 
-  // 2) Rocking du torse (nez vs épaules) — signé, donc monotone sur un coup
-  let bust = 0.5;
-  if (nose && shoulders) {
-    bust = clampRange((shoulders.y - nose.y) / scale, -1.2, 1.4);
-  }
-
-  // 3) Traction des bras : hauteur + extension (cœur du signal rame face-cam)
-  let armSum = 0;
-  let armN = 0;
-  for (const [wrist, elbow, shoulder] of [
-    [lw, le, ls],
-    [rw, re, rs],
+  // 2) Écartement des coudes : collés au corps au catch, ouverts au finish.
+  let elbowSum = 0;
+  let elbowN = 0;
+  for (const [elbow, shoulder] of [
+    [le, ls],
+    [re, rs],
   ] as const) {
-    // Uniquement des mesures SIGNÉES : une distance absolue repasse par zéro
-    // quand le poignet croise l'épaule et ferait compter deux coups par cycle.
-    if (wrist && shoulder) {
-      const height = (shoulder.y - wrist.y) / scale;
-      const spread = Math.abs(wrist.x - shoulder.x) / scale;
-      const elbowBend =
-        elbow != null ? dist(elbow, shoulder) / (dist(wrist, elbow) + 0.001) : 1;
-      armSum += 0.6 * clampRange(height, -1.2, 1.6) + 0.22 * Math.min(1.4, spread) + 0.18 * Math.min(2, elbowBend);
-      armN++;
-    } else if (elbow && shoulder) {
-      const height = (shoulder.y - elbow.y) / scale;
-      const spread = Math.abs(elbow.x - shoulder.x) / scale;
-      armSum += 0.7 * clampRange(height, -1, 1.4) + 0.3 * Math.min(1.2, spread);
-      armN++;
+    if (elbow && shoulder) {
+      elbowSum += Math.abs(elbow.x - shoulder.x) / scale;
+      elbowN++;
     }
   }
-  const armDrive = armN ? armSum / armN : 0.5;
+  const elbowSpread = elbowN ? Math.min(1.6, elbowSum / elbowN) : 0;
 
-  // 4) Poignets / coudes vs centre épaules (pull groupé)
-  let pull = 0.5;
-  const armAnchor = wrists ?? elbows;
-  if (armAnchor && shoulders) {
-    const dy = (shoulders.y - armAnchor.y) / scale;
-    const dx = Math.abs(armAnchor.x - shoulders.x) / scale;
-    pull = Math.min(1.4, 0.65 * Math.max(0, dy + 0.35) + 0.35 * Math.min(1.2, dx));
+  // 3) Redressement du buste : tête basse au catch, haute au finish.
+  let lean = 0;
+  if (nose && shoulders) {
+    lean = clampRange((shoulders.y - nose.y) / scale, -1.2, 1.6);
+  } else if (shoulders && hips) {
+    lean = clampRange((hips.y - shoulders.y) / scale, -1.2, 1.6);
   }
 
-  // Bras + pull dominent : le drive doit monter/descendre à chaque coup
+  // 4) Mains ramenées vers le buste (secours quand les coudes manquent).
+  let handsIn = 0;
+  if (wrists && shoulders) {
+    handsIn = clampRange(1 - dist(wrists, shoulders) / (scale * 2.2), -1, 1.4);
+  }
+
   const drive =
-    0.18 * depth +
-    0.18 * bust +
-    0.42 * Math.min(1.6, armDrive) +
-    0.22 * pull;
+    0.42 * depth + 0.28 * elbowSpread + 0.2 * lean + 0.1 * handsIn;
 
   let parts = 0;
   if (ls || rs) parts++;

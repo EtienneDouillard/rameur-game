@@ -5,6 +5,8 @@ import { FlowController, type FlowSnapshot, FLOW_CHARGE_STROKES, FLOW_BOOST_STRO
 import { multiplierForCombo } from "./combo";
 
 const FINAL_RUSH_MS = 10_000;
+/** Points de base d'une traction (avant combo et vent arrière) */
+const POINTS_PER_STROKE = 5;
 
 export interface PlayerStats {
   score: number;
@@ -186,7 +188,8 @@ export class GameSession {
 
     const mult = multiplierForCombo(s.combo);
     const flowMult = this.flow.onStroke(player, flowRegular, at);
-    const points = Math.round(100 * strength * mult * flowMult);
+    // Barème resserré : un coup vaut quelques points, pas des centaines.
+    const points = Math.round(POINTS_PER_STROKE * (0.8 + 0.2 * strength) * mult * flowMult);
     s.score += points;
     this.syncFlowStats();
 
