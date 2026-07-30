@@ -123,7 +123,7 @@ type GameEvent =
   | { type: "ComboLost"; player: PlayerId; at: number }
   | { type: "PlayerIdle"; player: PlayerId; at: number }
   | { type: "PlayerActive"; player: PlayerId; at: number }
-  | { type: "CalibrationProgress"; player: PlayerId; progress: number }
+  | { type: "CalibrationProgress"; player: PlayerId; progress: number; phase: "idle" | "strokes" | "ready"; strokesDone: number; strokesRequired: number }
   | { type: "CalibrationDone"; player: PlayerId; profile: PlayerRhythmProfile };
 
 interface PlayerRhythmProfile {
@@ -154,14 +154,14 @@ Par joueur, à partir des landmarks MoveNet :
 - **One Euro Filter** (ou EMA double) sur chaque feature.  
 - Détection de coup : passage de phase (ex. minimum local de `bustCompression` suivi d’un maximum) + **fenêtre refractory** (~40 % de la période calibrée) pour éviter les doubles triggers.
 
-### 4.4 Calibration automatique (5 s)
+### 4.4 Calibration automatique (repos + 5 coups)
 
-Au démarrage de partie (ou écran dédié) :
+Au démarrage de partie (écran « Essai des rames ») :
 
-1. Les deux joueurs rament normalement.  
-2. Collecte des features sur 5 s.  
-3. Calcul par joueur : période dominante (autocorrélation ou pics), amplitude P10–P90, seuils `stroke` / `idle`.  
-4. Émission `CalibrationDone` → le gameplay peut démarrer le timer 90 s.
+1. **~2,2 s immobile** par joueur : mesure du bruit caméra et ligne de base.  
+2. **5 coups** de rame reconnus (compteur affiché, son de confirmation).  
+3. Calcul par joueur : période médiane, amplitude, `noiseAmp`, `minStrokeAmp`, seuils `stroke` / `idle`.  
+4. Émission `CalibrationDone` → le gameplay démarre quand tous les joueurs actifs ont fini.
 
 Aucun réglage manuel.
 
@@ -235,7 +235,7 @@ Métriques fin de partie :
 ### 6.3 Fin de partie
 
 - Overlay victoire / comparaison scores.  
-- Bouton **Rejouer** (recharge calibration 5 s).
+- Bouton **Rejouer** (recharge l’essai des rames).
 
 ---
 
@@ -276,7 +276,7 @@ Stratégies :
 
 1. Scaffold Vite + TypeScript + Netlify.  
 2. Vision dual-ROI + workers + métriques FPS à l’écran debug (masquable).  
-3. Couche événements + calibration 5 s.  
+3. Couche événements + calibration (repos + 5 coups).  
 4. Gameplay 90 s + scoring.  
 5. UI/FX/audio.  
 6. Tests sur iPad Safari + Mac Chrome.  

@@ -24,7 +24,7 @@ Guide détaillé : **[docs/DEPLOIEMENT-NETLIFY.md](docs/DEPLOIEMENT-NETLIFY.md)*
 | Couche | Dossier |
 |--------|---------|
 | Vision (caméra, dual-ROI MoveNet) | `src/vision/` |
-| Événements (rythme, calibration 5 s) | `src/events/` |
+| Événements (rythme, calibration 5 coups) | `src/events/` |
 | Gameplay (90 s, score, combo) | `src/game/` |
 | UI + particules + audio | `src/ui/`, `src/audio/` |
 
@@ -35,4 +35,4 @@ Documentation : [`docs/ARCHITECTURE-TECHNIQUE.md`](docs/ARCHITECTURE-TECHNIQUE.m
 README.md
 - Score basé sur régularité et **combo** (×1 → ×10).
 - Rythme irrégulier : combo à zéro.
-- Calibration automatique **5 s** au début de chaque partie.
+- Calibration automatique (**repos ~2 s** puis **5 coups**) au début de chaque partie.
