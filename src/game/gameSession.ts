@@ -240,4 +240,12 @@ export class GameSession {
   }
 }
 
+export function strokeRateSpm(intervals: number[]): number {
+  if (intervals.length === 0) return 0;
+  const recent = intervals.slice(-5);
+  const avg = recent.reduce((a, b) => a + b, 0) / recent.length;
+  if (avg < 250) return 0;
+  return Math.min(60, Math.round(60000 / avg));
+}
+
 export { multiplierForCombo, comboLabel } from "./combo";

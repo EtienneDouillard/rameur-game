@@ -4,8 +4,9 @@ import { activePlayers } from "../types/gameMode";
 import { RhythmEngine } from "../events/rhythmEngine";
 import {
   GameSession,
-  comboLabel,
   multiplierForCombo,
+  comboLabel,
+  strokeRateSpm,
   type GameSnapshot,
 } from "../game/gameSession";
 import { SoundEngine } from "../audio/soundEngine";
@@ -93,9 +94,16 @@ export class App {
         <main class="rb-main">
           <div class="rb-column rb-column--left" data-col="p1">
             <div class="rb-flow-stack">
-              <span class="rb-flow-strokes" data-flow-strokes="p1" title="Coups depuis le début">0</span>
+              <div class="rb-flow-moves">
+                <span class="rb-flow-metric-label">MOVE</span>
+                <span class="rb-flow-strokes" data-flow-strokes="p1">0</span>
+              </div>
               <div class="rb-energy" data-flow-bar="p1"><div class="rb-energy-fill" data-energy="p1"></div></div>
               <span class="rb-flow-caption" data-flow-caption="p1">0/7</span>
+            </div>
+            <div class="rb-flow-rhythm">
+              <span class="rb-flow-metric-label">RHYTHM</span>
+              <span class="rb-flow-rhythm-value" data-flow-rhythm="p1">—</span>
             </div>
             <div class="rb-flash" data-flash="p1"></div>
           </div>
@@ -147,9 +155,16 @@ export class App {
           </div>
           <div class="rb-column rb-column--right" data-col="p2">
             <div class="rb-flow-stack">
-              <span class="rb-flow-strokes" data-flow-strokes="p2" title="Coups depuis le début">0</span>
+              <div class="rb-flow-moves">
+                <span class="rb-flow-metric-label">MOVE</span>
+                <span class="rb-flow-strokes" data-flow-strokes="p2">0</span>
+              </div>
               <div class="rb-energy" data-flow-bar="p2"><div class="rb-energy-fill" data-energy="p2"></div></div>
               <span class="rb-flow-caption" data-flow-caption="p2">0/7</span>
+            </div>
+            <div class="rb-flow-rhythm">
+              <span class="rb-flow-metric-label">RHYTHM</span>
+              <span class="rb-flow-rhythm-value" data-flow-rhythm="p2">—</span>
             </div>
             <div class="rb-flash" data-flash="p2"></div>
           </div>
@@ -605,14 +620,19 @@ export class App {
     if (strokesEl) strokesEl.textContent = String(stats.strokes);
 
     const cap = this.root.querySelector<HTMLElement>(`[data-flow-caption="${key}"]`);
-    if (!cap) return;
-    if (flow.inFlow) {
-      cap.textContent = `BOOST ${flow.boostStrokesLeft}/${flow.boostStrokesTotal}`;
-      cap.classList.add("rb-flow-caption--active");
-    } else {
-      cap.textContent = `${flow.chargeProgress}/${flow.chargeRequired}`;
-      cap.classList.remove("rb-flow-caption--active");
+    if (cap) {
+      if (flow.inFlow) {
+        cap.textContent = `BOOST ${flow.boostStrokesLeft}/${flow.boostStrokesTotal}`;
+        cap.classList.add("rb-flow-caption--active");
+      } else {
+        cap.textContent = `${flow.chargeProgress}/${flow.chargeRequired}`;
+        cap.classList.remove("rb-flow-caption--active");
+      }
     }
+
+    const spm = strokeRateSpm(stats.intervals);
+    const rhythmEl = this.root.querySelector<HTMLElement>(`[data-flow-rhythm="${key}"]`);
+    if (rhythmEl) rhythmEl.textContent = spm > 0 ? String(spm) : "—";
   }
 
   private setPhaseText(text: string): void {
