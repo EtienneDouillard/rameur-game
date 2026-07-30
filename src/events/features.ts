@@ -25,7 +25,7 @@ function dist(p1: { x: number; y: number }, p2: { x: number; y: number }): numbe
 }
 
 export interface MotionFeatures {
-  /** Signal composite 0–1+ : monte quand le joueur avance / tire */
+  /** Signal composite : oscille avec le cycle de rame (face caméra) */
   drive: number;
   shoulderWidth: number;
   valid: boolean;
@@ -34,9 +34,9 @@ export interface MotionFeatures {
 }
 
 /**
- * Features pour rameur FILMÉ DE FACE (mouvement principal en profondeur).
- * Combine : largeur d’épaules (échelle), hauteur torse, extension des bras.
- * Ne dépend jamais d’un seul point.
+ * Features pour rameur FILMÉ DE FACE.
+ * Priorité aux bras / traction (signal qui oscille vraiment),
+ * profondeur et torse en soutien — moins de biais sur la posture figée.
  */
 export function extractFeatures(landmarks: PoseLandmark[]): MotionFeatures {
   if (!landmarks.length) {
@@ -55,8 +55,9 @@ export function extractFeatures(landmarks: PoseLandmark[]): MotionFeatures {
 
   const shoulders = mid(ls, rs);
   const hips = mid(lh, rh);
+  const wrists = mid(lw, rw);
+  const elbows = mid(le, re);
 
-  // Largeur de référence (épaules > hanches)
   let shoulderWidth = 0;
   if (ls && rs) shoulderWidth = dist(ls, rs);
   else if (lh && rh) shoulderWidth = dist(lh, rh) * 1.15;
@@ -68,20 +69,16 @@ export function extractFeatures(landmarks: PoseLandmark[]): MotionFeatures {
 
   const scale = Math.max(0.04, shoulderWidth || 0.12);
 
-  // 1) Échelle / profondeur (avancée vers la caméra → épaules plus larges)
-  const depth = Math.min(1.4, scale / 0.22);
+  // 1) Profondeur (avancée → épaules plus larges) — utile mais bruité
+  const depth = Math.min(1.35, scale / 0.22);
 
-  // 2) Position verticale du torse (recul / avance relative)
-  const torsoAnchor = shoulders ?? hips ?? nose!;
-  const torsoLift = 1 - Math.min(1, Math.max(0, torsoAnchor.y));
-
-  // 3) Compression buste (nez ↔ épaules), normalisée
+  // 2) Rocking du torse (nez vs épaules) — oscillatoire
   let bust = 0.5;
   if (nose && shoulders) {
-    bust = Math.min(1.2, dist(nose, shoulders) / scale);
+    bust = Math.min(1.25, dist(nose, shoulders) / scale);
   }
 
-  // 4) Bras : hauteur poignets relative + extension
+  // 3) Traction des bras : hauteur + extension (cœur du signal rame face-cam)
   let armSum = 0;
   let armN = 0;
   for (const [wrist, elbow, shoulder] of [
@@ -93,18 +90,32 @@ export function extractFeatures(landmarks: PoseLandmark[]): MotionFeatures {
       const height = (shoulder.y - wrist.y) / scale;
       const elbowBend =
         elbow != null ? dist(elbow, shoulder) / (dist(wrist, elbow) + 0.001) : 1;
-      armSum += 0.45 * reach + 0.35 * Math.max(0, height) + 0.2 * Math.min(2, elbowBend);
+      armSum += 0.42 * reach + 0.4 * Math.max(-0.3, height) + 0.18 * Math.min(2, elbowBend);
       armN++;
     } else if (elbow && shoulder) {
-      armSum += dist(elbow, shoulder) / scale;
+      const reach = dist(elbow, shoulder) / scale;
+      const height = (shoulder.y - elbow.y) / scale;
+      armSum += 0.55 * reach + 0.45 * Math.max(-0.2, height);
       armN++;
     }
   }
-  const armDrive = armN ? armSum / armN : 0.55;
+  const armDrive = armN ? armSum / armN : 0.5;
 
-  // Pondération : profondeur (face) prioritaire, bras en renfort
+  // 4) Poignets / coudes vs centre épaules (pull groupé)
+  let pull = 0.5;
+  const armAnchor = wrists ?? elbows;
+  if (armAnchor && shoulders) {
+    const dy = (shoulders.y - armAnchor.y) / scale;
+    const dx = Math.abs(armAnchor.x - shoulders.x) / scale;
+    pull = Math.min(1.4, 0.65 * Math.max(0, dy + 0.35) + 0.35 * Math.min(1.2, dx));
+  }
+
+  // Bras + pull dominent : le drive doit monter/descendre à chaque coup
   const drive =
-    0.38 * depth + 0.22 * torsoLift + 0.2 * bust + 0.2 * Math.min(1.5, armDrive);
+    0.18 * depth +
+    0.18 * bust +
+    0.42 * Math.min(1.6, armDrive) +
+    0.22 * pull;
 
   let parts = 0;
   if (ls || rs) parts++;
@@ -113,8 +124,7 @@ export function extractFeatures(landmarks: PoseLandmark[]): MotionFeatures {
   if (lw || rw || le || re) parts++;
   const confidence = Math.min(1, parts / 3);
 
-  // Valide dès qu’on a au moins un ancrage torse + un minimum de confiance
-  const valid = confidence >= 0.25 && (shoulders != null || hips != null || nose != null);
+  const valid = confidence >= 0.22 && (shoulders != null || hips != null || nose != null);
 
   return { drive, shoulderWidth: scale, valid, confidence };
 }

@@ -193,7 +193,7 @@ export class PoseVision {
     // Rejeter les poses trop peu fiables (bruit / fond)
     const avgScore =
       pose.keypoints.reduce((s, k) => s + (k.score ?? 0), 0) / pose.keypoints.length;
-    if (avgScore < 0.12) return [];
+    if (avgScore < 0.1) return [];
 
     return pose.keypoints.map((kp) => ({
       x: kp.x / 192,
