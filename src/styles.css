@@ -210,6 +210,10 @@ body {
   object-fit: cover;
 }
 
+.rb--video-mirror .rb-video {
+  transform: scaleX(-1);
+}
+
 .rb-video-fx {
   position: absolute;
   inset: 0;

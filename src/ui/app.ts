@@ -17,6 +17,7 @@ import { VideoStageFx } from "./videoStageFx";
 import { CameraRig } from "./cameraRig";
 import { BackgroundMusic } from "../audio/backgroundMusic";
 import { loadAudioPrefs, saveAudioPrefs } from "../audio/audioPrefs";
+import { loadVideoPrefs, saveVideoPrefs } from "../vision/videoPrefs";
 import { OdysseyVoice } from "./odysseyVoice";
 import {
   DEFAULT_MATCH_DURATION_SEC,
@@ -50,6 +51,7 @@ export class App {
   private matchDurationSec: MatchDurationSec = DEFAULT_MATCH_DURATION_SEC;
   private audioMusicOn = true;
   private audioSfxOn = true;
+  private videoMirrorOn = false;
   private odyssey: Record<PlayerId, OdysseyVoice> = {
     player1: new OdysseyVoice(),
     player2: new OdysseyVoice(),
@@ -144,6 +146,11 @@ export class App {
                     `<button type="button" class="rb-mode rb-duration" data-duration="${sec}">${sec}s</button>`,
                 ).join("")}
               </div>
+              <p class="rb-mode-label">Caméra</p>
+              <div class="rb-mode-picker" role="group" aria-label="Affichage caméra">
+                <button type="button" class="rb-mode" data-video-mirror-toggle>Retourner la vidéo : OFF</button>
+              </div>
+              <p class="rb-mode-hint" data-video-mirror-hint>Si gauche et droite sont inversées à l'écran, activez cette option.</p>
               <p class="rb-mode-label">Son</p>
               <div class="rb-mode-picker" role="group" aria-label="Audio">
                 <button type="button" class="rb-mode rb-mode--active" data-audio-toggle="music">Musique : ON</button>
@@ -193,6 +200,7 @@ export class App {
           <span class="rb-footer-audio">
             <button type="button" class="rb-audio-mini" data-audio-toggle="music" title="Musique">♪</button>
             <button type="button" class="rb-audio-mini" data-audio-toggle="sfx" title="Effets">FX</button>
+            <button type="button" class="rb-audio-mini" data-video-mirror-toggle title="Retourner la vidéo">⇄</button>
           </span>
         </footer>
       </div>
@@ -231,6 +239,11 @@ export class App {
     this.setPlayerCount(1);
     this.setMatchDuration(DEFAULT_MATCH_DURATION_SEC);
     this.applyAudioPrefs(loadAudioPrefs());
+    this.applyVideoPrefs(loadVideoPrefs());
+
+    this.root.querySelectorAll<HTMLButtonElement>("[data-video-mirror-toggle]").forEach((btn) => {
+      btn.onclick = () => this.setVideoMirror(!this.videoMirrorOn);
+    });
 
     this.root.querySelectorAll<HTMLButtonElement>("[data-audio-toggle]").forEach((btn) => {
       btn.onclick = () => {
@@ -303,6 +316,37 @@ export class App {
     saveAudioPrefs({ music: this.audioMusicOn, sfx: this.audioSfxOn });
   }
 
+  private applyVideoPrefs(prefs: { mirror: boolean }): void {
+    this.videoMirrorOn = prefs.mirror;
+    this.syncVideoMirrorUi();
+  }
+
+  private setVideoMirror(on: boolean): void {
+    this.videoMirrorOn = on;
+    saveVideoPrefs({ mirror: on });
+    this.syncVideoMirrorUi();
+  }
+
+  private syncVideoMirrorUi(): void {
+    const rb = this.root.querySelector<HTMLElement>("[data-rb]")!;
+    rb.classList.toggle("rb--video-mirror", this.videoMirrorOn);
+    this.vision?.setFlipHorizontal(this.videoMirrorOn);
+    this.root.querySelectorAll<HTMLButtonElement>("[data-video-mirror-toggle]").forEach((btn) => {
+      const mini = btn.classList.contains("rb-audio-mini");
+      if (mini) {
+        btn.textContent = "⇄";
+        btn.classList.toggle("rb-audio-mini--off", !this.videoMirrorOn);
+        btn.classList.toggle("rb-mode--active", this.videoMirrorOn);
+        btn.title = this.videoMirrorOn
+          ? "Retourner la vidéo : activé"
+          : "Retourner la vidéo : désactivé";
+      } else {
+        btn.textContent = `Retourner la vidéo : ${this.videoMirrorOn ? "ON" : "OFF"}`;
+        btn.classList.toggle("rb-mode--active", this.videoMirrorOn);
+      }
+    });
+  }
+
   private updateAudioToggleLabels(): void {
     this.root.querySelectorAll<HTMLButtonElement>("[data-audio-toggle]").forEach((btn) => {
       const kind = btn.dataset.audioToggle;
@@ -337,6 +381,7 @@ export class App {
     await this.sound.unlock();
     this.music = new BackgroundMusic();
     this.applyAudioPrefs(loadAudioPrefs());
+    this.applyVideoPrefs(loadVideoPrefs());
 
     try {
       await startCamera(this.video);
@@ -351,6 +396,7 @@ export class App {
       this.rhythm.ingest(frames);
     });
     this.vision.setPlayerCount(this.playerCount);
+    this.vision.setFlipHorizontal(this.videoMirrorOn);
 
     try {
       await this.vision.init();

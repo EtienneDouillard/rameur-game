@@ -23,6 +23,7 @@ export class PoseVision {
     player2: [],
   };
   private busy = false;
+  private flipHorizontal = false;
 
   constructor(video: HTMLVideoElement, onFrame: PoseFrameCallback) {
     this.video = video;
@@ -39,6 +40,11 @@ export class PoseVision {
 
   setPlayerCount(count: PlayerCount): void {
     this.playerCount = count;
+  }
+
+  /** Aligné sur l’option « retourner la vidéo » (miroir d’affichage) */
+  setFlipHorizontal(on: boolean): void {
+    this.flipHorizontal = on;
   }
 
   async init(): Promise<void> {
@@ -127,7 +133,7 @@ export class PoseVision {
 
     if (this.multipose) {
       const poses = await detector.estimatePoses(this.fullCanvas, {
-        flipHorizontal: false,
+        flipHorizontal: this.flipHorizontal,
         maxPoses: this.playerCount,
       });
       const assigned = assignMultipose(poses, vw, vh, this.playerCount);
@@ -187,7 +193,7 @@ export class PoseVision {
     cropCtx.drawImage(srcCtx.canvas, sx, 0, sw, vh, 0, 0, 192, 192);
 
     const poses = await detector.estimatePoses(this.cropCanvas, {
-      flipHorizontal: false,
+      flipHorizontal: this.flipHorizontal,
     });
     const pose = poses[0];
     if (!pose?.keypoints) return [];
