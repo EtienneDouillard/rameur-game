@@ -934,9 +934,23 @@ body {
 .rb-play-hint {
   font-family: var(--font-display);
   font-size: clamp(1.5rem, 5vw, 2.5rem);
-  letter-spacing: 0.1em;
+  letter-spacing: 0.12em;
   color: var(--gold);
   animation: pulse-hint 1.2s ease-in-out infinite;
+  text-shadow: 0 2px 20px rgba(0, 0, 0, 0.85);
+  max-width: min(90vw, 520px);
+}
+
+.rb-play-hint--hot {
+  color: #f0e6c8;
+  letter-spacing: 0.16em;
+  animation: pulse-hint 0.7s ease-in-out infinite;
+}
+
+.rb-play-hint--flow {
+  color: #ffd4a8;
+  text-shadow: 0 0 28px rgba(164, 22, 26, 0.55), 0 2px 18px rgba(0, 0, 0, 0.9);
+  animation: pulse-hint 0.55s ease-in-out infinite;
 }
 
 @keyframes pulse-hint {

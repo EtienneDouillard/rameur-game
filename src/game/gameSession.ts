@@ -163,11 +163,12 @@ export class GameSession {
       const dt = at - last;
       s.intervals.push(dt);
       const period = this.expectedPeriod[player];
-      const lo = period * 0.72;
-      const hi = period * 1.28;
+      // Fenêtre large : le flow doit rester accessible (même tolérance que le combo, un peu plus)
+      const lo = period * 0.65;
+      const hi = period * 1.4;
       regular = dt >= lo && dt <= hi;
-      const flowLo = period * 0.78;
-      const flowHi = period * 1.22;
+      const flowLo = period * 0.62;
+      const flowHi = period * 1.45;
       flowRegular = dt >= flowLo && dt <= flowHi;
       if (regular) {
         s.combo = Math.min(s.combo + 1, 12);
@@ -177,7 +178,8 @@ export class GameSession {
       }
     } else {
       s.combo = 1;
-      flowRegular = false;
+      // Premier coup d'une série : démarre la charge (sinon 7/7 est trop dur)
+      flowRegular = true;
     }
     s.maxCombo = Math.max(s.maxCombo, s.combo);
     s.strokes++;

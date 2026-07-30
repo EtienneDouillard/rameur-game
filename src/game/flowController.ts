@@ -5,8 +5,8 @@ export const FLOW_CHARGE_STROKES = 7;
 /** Coups en flow avec multiplicateur de score */
 export const FLOW_BOOST_STROKES = 10;
 const FLOW_SCORE_MULT = 1.45;
-/** Sans coup régulier, le flow / la charge tombent */
-const FLOW_IDLE_MS = 2200;
+/** Sans coup, le flow / la charge tombent (période rame ~1 s → marge confortable) */
+const FLOW_IDLE_MS = 3600;
 
 export interface FlowSnapshot {
   /** Remplissage jauge latérale 0–1 */
@@ -55,7 +55,10 @@ export class FlowController {
 
     if (s.inFlow) {
       if (!flowRegular) {
-        this.resetPlayer(player);
+        // Une seule faute : on perd le vent, mais on garde un peu de charge
+        s.inFlow = false;
+        s.boostLeft = 0;
+        s.charge = 2;
         return 1;
       }
       const mult = FLOW_SCORE_MULT;
@@ -76,8 +79,9 @@ export class FlowController {
         s.charge = 0;
         return 1;
       }
-    } else {
-      s.charge = 0;
+    } else if (s.charge > 0) {
+      // Une erreur ne remonte pas à 0 : on perd 1 cran seulement
+      s.charge = Math.max(0, s.charge - 1);
     }
 
     return 1;

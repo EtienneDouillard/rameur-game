@@ -17,6 +17,7 @@ import { VideoStageFx } from "./videoStageFx";
 import { CameraRig } from "./cameraRig";
 import { BackgroundMusic } from "../audio/backgroundMusic";
 import { loadAudioPrefs, saveAudioPrefs } from "../audio/audioPrefs";
+import { OdysseyVoice, flowBadgeLabel } from "./odysseyVoice";
 import {
   DEFAULT_MATCH_DURATION_SEC,
   formatMatchTimer,
@@ -49,6 +50,8 @@ export class App {
   private matchDurationSec: MatchDurationSec = DEFAULT_MATCH_DURATION_SEC;
   private audioMusicOn = true;
   private audioSfxOn = true;
+  private odyssey = new OdysseyVoice();
+  private lastCharge: Record<PlayerId, number> = { player1: 0, player2: 0 };
 
   constructor(root: HTMLElement, video: HTMLVideoElement) {
     this.root = root;
@@ -380,6 +383,8 @@ export class App {
     this.lastCombo = { player1: 0, player2: 0 };
     this.lastComboTier = { player1: 1, player2: 1 };
     this.wasInFlow = { player1: false, player2: false };
+    this.lastCharge = { player1: 0, player2: 0 };
+    this.odyssey.reset();
     this.lastCountdownSec = -1;
     this.music?.stop();
     this.lastPoints = { player1: 0, player2: 0 };
@@ -507,43 +512,73 @@ export class App {
       this.hidePlayHint();
       return;
     }
+
+    let justEntered = false;
+    let justLeft = false;
+    let justBroke = false;
+    let bestCharge = 0;
+    let anyInFlow = false;
+
     for (const player of activePlayers(this.playerCount)) {
-      const flow = player === "player1" ? snap.player1.flow : snap.player2.flow;
+      const flow = player === "player1" ? snap.player1 : snap.player2;
+      const f = flow.flow;
       const key = player === "player1" ? "p1" : "p2";
       const badge = this.root.querySelector<HTMLElement>(`[data-flow="${key}"]`);
       if (badge) {
-        badge.hidden = !flow.inFlow;
-        badge.textContent = "VENT ARRIÈRE";
-        badge.classList.toggle("rb-flow-badge--over", flow.inFlow);
+        badge.hidden = !f.inFlow;
+        if (f.inFlow) {
+          badge.textContent = flowBadgeLabel(f.boostStrokesLeft, f.boostStrokesTotal);
+        }
+        badge.classList.toggle("rb-flow-badge--over", f.inFlow);
       }
 
-      if (flow.inFlow && !this.wasInFlow[player]) {
+      if (f.inFlow && !this.wasInFlow[player]) {
+        justEntered = true;
         this.sound.playFlowEnter();
         this.sound.playOverdrive();
       }
-      if (!flow.inFlow && this.wasInFlow[player]) {
+      if (!f.inFlow && this.wasInFlow[player]) {
+        justLeft = true;
         this.sound.playFlowFade();
       }
-      this.wasInFlow[player] = flow.inFlow;
-    }
-    this.updatePlayHint(snap);
-  }
+      if (f.chargeProgress < this.lastCharge[player] && !f.inFlow && !this.wasInFlow[player]) {
+        justBroke = true;
+      }
 
-  /** Hint visible seulement proche du flow (5/7+) et hors flow */
-  private updatePlayHint(snap: GameSnapshot): void {
-    const hint = this.root.querySelector<HTMLElement>("[data-play-hint]");
-    if (!hint) return;
-    let nearFlow = false;
-    for (const player of activePlayers(this.playerCount)) {
-      const flow = player === "player1" ? snap.player1.flow : snap.player2.flow;
-      if (!flow.inFlow && flow.chargeProgress >= 5) nearFlow = true;
+      this.wasInFlow[player] = f.inFlow;
+      this.lastCharge[player] = f.chargeProgress;
+      bestCharge = Math.max(bestCharge, f.inFlow ? 7 : f.chargeProgress);
+      if (f.inFlow) anyInFlow = true;
     }
-    hint.hidden = !nearFlow;
+
+    const line = this.odyssey.lineFor({
+      charge: bestCharge,
+      inFlow: anyInFlow,
+      justEnteredFlow: justEntered,
+      justLeftFlow: justLeft && !anyInFlow,
+      justBroke: justBroke && !anyInFlow && !justEntered,
+      finalRush: snap.finalRush,
+    });
+
+    const hint = this.root.querySelector<HTMLElement>("[data-play-hint]");
+    if (hint) {
+      if (line) {
+        hint.hidden = false;
+        hint.textContent = line;
+        hint.classList.toggle("rb-play-hint--flow", anyInFlow);
+        hint.classList.toggle("rb-play-hint--hot", !anyInFlow && bestCharge >= 5);
+      } else {
+        hint.hidden = true;
+      }
+    }
   }
 
   private hidePlayHint(): void {
     const hint = this.root.querySelector<HTMLElement>("[data-play-hint]");
-    if (hint) hint.hidden = true;
+    if (hint) {
+      hint.hidden = true;
+      hint.classList.remove("rb-play-hint--flow", "rb-play-hint--hot");
+    }
   }
 
   private updateVideoComboFx(snap: GameSnapshot): void {
