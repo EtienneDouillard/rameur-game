@@ -99,7 +99,6 @@ export class App {
           <div class="rb-center">
             <div class="rb-screen rb-screen--active" data-screen="start">
               <h1>ROW BATTLE</h1>
-              <p>Une caméra · Zéro capteur · 100 % navigateur</p>
               <p class="rb-mode-label">Mode de jeu</p>
               <div class="rb-mode-picker" role="group" aria-label="Nombre de joueurs">
                 <button type="button" class="rb-mode rb-mode--active" data-mode="1">1 joueur</button>
