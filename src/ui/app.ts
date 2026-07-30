@@ -149,8 +149,8 @@ export class App {
             </div>
             <div class="rb-screen" data-screen="calib">
               <h2>Essai des rames</h2>
-              <p>Faites <strong>5 coups</strong> face à la caméra pour calibrer votre rythme de marin.</p>
-              <p class="rb-mode-hint" data-calib-hint></p>
+              <p data-calib-step><strong>1.</strong> Restez <strong>immobile ~2 s</strong> face à la caméra.</p>
+              <p class="rb-mode-hint" data-calib-hint>Puis 5 coups de rame pour calibrer l'IA sur votre mouvement.</p>
               <div class="rb-calib-bars">
                 <div class="rb-calib-bar" data-calib-wrap="p1"><span data-calib="p1"></span></div>
                 <div class="rb-calib-bar" data-calib-wrap="p2"><span data-calib="p2"></span></div>
@@ -399,8 +399,8 @@ export class App {
     if (calibHint) {
       calibHint.textContent =
         this.playerCount === 1
-          ? "Chaque coup remplit la jauge — comme un essai avant la traversée."
-          : "Deux équipages : 5 coups chacun, même rythme que en mer.";
+          ? "Ne bougez pas au début, puis ramez comme en partie."
+          : "Chaque marin : immobile, puis 5 coups.";
     }
     this.game.beginCalibration(this.playerCount, this.matchDurationSec);
     this.rhythm.startCalibration(this.playerCount);
@@ -416,6 +416,16 @@ export class App {
       const key = ev.player === "player1" ? "p1" : "p2";
       const bar = this.root.querySelector<HTMLElement>(`[data-calib="${key}"]`);
       if (bar) bar.style.width = `${Math.round(ev.progress * 100)}%`;
+      const step = this.root.querySelector<HTMLElement>("[data-calib-step]");
+      if (step) {
+        if (ev.progress < 0.23) {
+          step.innerHTML =
+            "<strong>1.</strong> Restez <strong>immobile</strong> — l'IA mesure le calme de la mer…";
+        } else if (ev.progress < 1) {
+          step.innerHTML =
+            "<strong>2.</strong> Ramez : <strong>5 coups</strong> nets pour calibrer votre rythme.";
+        }
+      }
     }
     if (ev.type === "CalibrationDone") {
       this.calibDone[ev.player] = true;

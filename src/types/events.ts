@@ -3,6 +3,10 @@ export type PlayerId = "player1" | "player2";
 export interface PlayerRhythmProfile {
   periodMs: number;
   amplitudeNorm: number;
+  /** Amplitude typique du bruit caméra au repos */
+  noiseAmp: number;
+  /** Amplitude mini d'un vrai coup (au-dessus du bruit) */
+  minStrokeAmp: number;
   thresholds: { stroke: number; idle: number };
 }
 

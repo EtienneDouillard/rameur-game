@@ -10,16 +10,16 @@ import { extractFeatures } from "./features";
 import { OneEuroFilter } from "./oneEuro";
 
 const CALIBRATION_STROKES = 5;
-/** Hold du dernier drive valide si la pose flicker */
-const HOLD_VALID_MS = 220;
-/**
- * Anti double-coup sans rater les vrais coups de rame (~0,7–1,3 s).
- * Trop haut → on rate des coups ; trop bas → 1 move = 2–4.
- */
-const REFRACTORY_MIN_MS = 360;
-const REFRACTORY_MAX_MS = 780;
-const REFRACTORY_RATIO = 0.32;
-const MIN_STROKE_GAP_MS = 400;
+/** Échantillons au repos avant les 5 coups (par joueur) */
+const CALIB_IDLE_MIN_MS = 2200;
+const CALIB_IDLE_MIN_SAMPLES = 45;
+const HOLD_VALID_MS = 200;
+const REFRACTORY_MIN_MS = 380;
+const REFRACTORY_MAX_MS = 800;
+const REFRACTORY_RATIO = 0.34;
+const MIN_STROKE_GAP_MS = 420;
+/** Vitesse basse → on recale la ligne de base du signal */
+const BASELINE_LERP = 0.04;
 
 interface PlayerState {
   filter: OneEuroFilter;
@@ -32,6 +32,9 @@ interface PlayerState {
   lastStrokeAt: number;
   strokeIntervals: number[];
   calibSamples: number[];
+  calibIdleSamples: number[];
+  calibIdleStartedAt: number;
+  calibIdleDone: boolean;
   calibPeakVel: number[];
   calibStrokeCount: number;
   profile: PlayerRhythmProfile | null;
@@ -40,6 +43,8 @@ interface PlayerState {
   lastValidDrive: number;
   lastValidAt: number;
   velocity: number;
+  driveBaseline: number;
+  lastMotionAt: number;
 }
 
 export class RhythmEngine {
@@ -57,9 +62,8 @@ export class RhythmEngine {
 
   private newPlayerState(): PlayerState {
     return {
-      // Un peu plus réactif pour suivre les pics de rame
-      filter: new OneEuroFilter(2.6, 0.035, 1.15),
-      velFilter: new OneEuroFilter(2.0, 0.07, 1),
+      filter: new OneEuroFilter(2.4, 0.04, 1.1),
+      velFilter: new OneEuroFilter(1.9, 0.075, 1),
       prevDrive: 0,
       prevTime: 0,
       phase: "rising",
@@ -68,6 +72,9 @@ export class RhythmEngine {
       lastStrokeAt: 0,
       strokeIntervals: [],
       calibSamples: [],
+      calibIdleSamples: [],
+      calibIdleStartedAt: 0,
+      calibIdleDone: false,
       calibPeakVel: [],
       calibStrokeCount: 0,
       profile: null,
@@ -76,6 +83,8 @@ export class RhythmEngine {
       lastValidDrive: 0,
       lastValidAt: 0,
       velocity: 0,
+      driveBaseline: 0.5,
+      lastMotionAt: 0,
     };
   }
 
@@ -96,6 +105,9 @@ export class RhythmEngine {
       p.filter.reset();
       p.velFilter.reset();
       p.calibSamples = [];
+      p.calibIdleSamples = [];
+      p.calibIdleStartedAt = 0;
+      p.calibIdleDone = false;
       p.calibPeakVel = [];
       p.calibStrokeCount = 0;
       p.profile = null;
@@ -106,15 +118,21 @@ export class RhythmEngine {
       p.active = false;
       p.prevTime = 0;
       p.prevDrive = 0;
+      p.driveBaseline = 0.5;
       p.lastValidAt = 0;
       p.refractoryUntil = 0;
       p.lastStrokeAt = 0;
+      p.lastMotionAt = 0;
       p.velocity = 0;
     }
   }
 
   isCalibrating(): boolean {
     return this.calibrating;
+  }
+
+  isPlayerIdleCalibrated(player: PlayerId): boolean {
+    return this.players[player].calibIdleDone;
   }
 
   ingest(frames: PlayerPoseFrame[]): void {
@@ -126,7 +144,7 @@ export class RhythmEngine {
       const feat = extractFeatures(frame.landmarks);
 
       let rawDrive: number | null = null;
-      if (feat.valid && feat.confidence >= 0.25) {
+      if (feat.valid && feat.confidence >= 0.28) {
         rawDrive = feat.drive;
         p.lastValidDrive = feat.drive;
         p.lastValidAt = frame.timestamp;
@@ -136,20 +154,53 @@ export class RhythmEngine {
 
       if (rawDrive === null) continue;
 
-      const drive = p.filter.filter(rawDrive, frame.timestamp);
+      const driveFiltered = p.filter.filter(rawDrive, frame.timestamp);
 
       let dtSec = 1 / 30;
       if (p.prevTime > 0) {
         dtSec = Math.max(1 / 60, Math.min(0.12, (frame.timestamp - p.prevTime) / 1000));
       }
-      const rawVel = (drive - p.prevDrive) / dtSec;
+      const rawVel = (driveFiltered - p.prevDrive) / dtSec;
       p.velocity = p.velFilter.filter(rawVel, frame.timestamp);
-      p.prevDrive = drive;
+      p.prevDrive = driveFiltered;
       p.prevTime = frame.timestamp;
 
+      const idleVel =
+        p.profile?.thresholds.idle ?? 0.08;
+      if (Math.abs(p.velocity) < idleVel * 1.1) {
+        p.driveBaseline += (driveFiltered - p.driveBaseline) * BASELINE_LERP;
+      } else {
+        p.lastMotionAt = now;
+      }
+
+      const drive = driveFiltered - p.driveBaseline;
+
       if (this.calibrating) {
-        // Ne plus compter les coups d'un joueur déjà calibré
         if (p.profile) continue;
+
+        if (!p.calibIdleDone) {
+          if (p.calibIdleStartedAt === 0) p.calibIdleStartedAt = now;
+          p.calibIdleSamples.push(driveFiltered);
+          const idleMs = now - p.calibIdleStartedAt;
+          const idleProgress = Math.min(1, idleMs / CALIB_IDLE_MIN_MS);
+          this.emit({
+            type: "CalibrationProgress",
+            player: frame.player,
+            progress: idleProgress * 0.22,
+          });
+          if (
+            idleMs >= CALIB_IDLE_MIN_MS &&
+            p.calibIdleSamples.length >= CALIB_IDLE_MIN_SAMPLES
+          ) {
+            p.calibIdleDone = true;
+            p.driveBaseline = median(p.calibIdleSamples.slice(-40));
+            p.phase = "rising";
+            p.cyclePeak = drive;
+            p.cycleTrough = drive;
+          }
+          continue;
+        }
+
         p.calibSamples.push(drive);
         this.detectStroke(p, drive, now, frame.player, true);
         continue;
@@ -157,18 +208,26 @@ export class RhythmEngine {
 
       if (!p.profile) continue;
 
-      if (!p.active && Math.abs(p.velocity) > p.profile.thresholds.idle) {
-        p.active = true;
-        this.emit({ type: "PlayerActive", player: frame.player, at: now });
+      const strokeTh = p.profile.thresholds.stroke;
+      if (Math.abs(p.velocity) > strokeTh * 0.85) {
+        if (!p.active) {
+          p.active = true;
+          this.emit({ type: "PlayerActive", player: frame.player, at: now });
+        }
+        p.lastMotionAt = now;
+      } else if (p.active && now - p.lastMotionAt > 1400) {
+        p.active = false;
+        this.emit({ type: "PlayerIdle", player: frame.player, at: now });
+        this.emit({ type: "ComboLost", player: frame.player, at: now });
+        p.phase = "rising";
+        p.cyclePeak = drive;
+        p.cycleTrough = drive;
       }
 
       this.detectStroke(p, drive, now, frame.player, false);
     }
   }
 
-  /**
-   * Pic rising→falling. Deux chemins (clair + rapide) + gap mini anti-doublon.
-   */
   private detectStroke(
     p: PlayerState,
     drive: number,
@@ -176,15 +235,16 @@ export class RhythmEngine {
     player: PlayerId,
     isCalib: boolean,
   ): void {
+    const prof = p.profile;
     const vUp = isCalib
-      ? 0.16
-      : Math.max(0.11, p.profile!.thresholds.stroke * 0.9);
+      ? 0.17
+      : Math.max(0.13, prof!.thresholds.stroke * 0.95);
     const vDown = isCalib
-      ? -0.13
-      : -Math.max(0.09, p.profile!.thresholds.stroke * 0.7);
+      ? -0.14
+      : -Math.max(0.11, prof!.thresholds.stroke * 0.75);
     const minAmp = isCalib
-      ? 0.032
-      : Math.max(0.028, p.profile!.amplitudeNorm * 0.3);
+      ? 0.04
+      : Math.max(prof!.minStrokeAmp, prof!.amplitudeNorm * 0.32);
 
     const canFire =
       now >= p.refractoryUntil &&
@@ -197,12 +257,11 @@ export class RhythmEngine {
       const span = p.cyclePeak - p.cycleTrough;
       const dropFromPeak = p.cyclePeak - drive;
 
-      // Chemin principal : pic net
       if (
         canFire &&
         p.velocity < vDown &&
-        span >= minAmp * 0.55 &&
-        dropFromPeak >= minAmp * 0.32
+        span >= minAmp &&
+        dropFromPeak >= minAmp * 0.38
       ) {
         this.fireStroke(p, drive, now, player, isCalib);
         p.phase = "falling";
@@ -210,21 +269,20 @@ export class RhythmEngine {
         return;
       }
 
-      // Chemin rapide : grosse descente même si le pic est partiel
+      // Chemin rapide uniquement en calibration
       if (
+        isCalib &&
         canFire &&
-        p.velocity < vDown * 1.55 &&
-        p.cyclePeak > -Infinity &&
-        dropFromPeak >= minAmp * 0.2
+        p.velocity < vDown * 1.5 &&
+        dropFromPeak >= minAmp * 0.28
       ) {
-        this.fireStroke(p, drive, now, player, isCalib);
+        this.fireStroke(p, drive, now, player, true);
         p.phase = "falling";
         p.cycleTrough = drive;
       }
     } else {
       p.cycleTrough = Math.min(p.cycleTrough, drive);
-      // Remontée pour armer le prochain cycle (pas trop exigeant)
-      if (p.velocity > vUp * 0.5) {
+      if (p.velocity > vUp * 0.55 && drive - p.cycleTrough >= minAmp * 0.22) {
         p.phase = "rising";
         p.cyclePeak = drive;
         p.cycleTrough = drive;
@@ -233,10 +291,10 @@ export class RhythmEngine {
 
     if (
       !isCalib &&
-      p.profile &&
+      prof &&
       p.active &&
       p.lastStrokeAt > 0 &&
-      now - p.lastStrokeAt > p.profile.periodMs * 2.8
+      now - p.lastStrokeAt > prof.periodMs * 2.8
     ) {
       p.active = false;
       this.emit({ type: "PlayerIdle", player, at: now });
@@ -255,10 +313,22 @@ export class RhythmEngine {
     isCalib: boolean,
   ): void {
     const amp = Math.max(0.01, p.cyclePeak - p.cycleTrough);
+
+    if (!isCalib && p.profile) {
+      if (amp < p.profile.minStrokeAmp) {
+        p.phase = "rising";
+        p.cyclePeak = _drive;
+        p.cycleTrough = _drive;
+        return;
+      }
+      if (!p.active) return;
+    }
+
     if (isCalib) {
       p.calibPeakVel.push(Math.abs(p.velocity));
       p.calibStrokeCount += 1;
-      const progress = Math.min(1, p.calibStrokeCount / CALIBRATION_STROKES);
+      const strokePart = p.calibStrokeCount / CALIBRATION_STROKES;
+      const progress = 0.22 + strokePart * 0.78;
       this.emit({ type: "CalibrationProgress", player, progress });
       if (p.calibStrokeCount >= CALIBRATION_STROKES) {
         this.finishPlayerCalibration(player, now);
@@ -274,23 +344,21 @@ export class RhythmEngine {
 
     if (p.lastStrokeAt > 0) {
       const interval = now - p.lastStrokeAt;
-      if (interval > 380 && interval < 2800) {
+      if (interval > 400 && interval < 2800) {
         p.strokeIntervals.push(interval);
       }
     }
     p.lastStrokeAt = now;
 
-    const strength = isCalib
-      ? Math.min(1, amp * 4)
-      : Math.min(1, amp / (p.profile!.amplitudeNorm + 0.05));
-
-    // Calib : pas d'événement gameplay (évite le spam au lancement)
     if (isCalib) return;
+
+    const strength = Math.min(1, amp / (p.profile!.amplitudeNorm + 0.05));
+    if (strength < 0.38) return;
 
     this.emit({
       type: "StrokeDetected",
       player,
-      strength: Math.max(0.25, strength),
+      strength: Math.max(0.38, strength),
       at: now,
     });
   }
@@ -298,6 +366,12 @@ export class RhythmEngine {
   private finishPlayerCalibration(player: PlayerId, now: number): void {
     const p = this.players[player];
     if (p.profile) return;
+
+    const idle = p.calibIdleSamples;
+    const noiseAmp =
+      idle.length >= 10
+        ? percentile(idle, 0.92) - percentile(idle, 0.08)
+        : 0.025;
 
     const intervals = p.strokeIntervals.filter((i) => i > 400 && i < 2500);
     const periodMs =
@@ -308,26 +382,30 @@ export class RhythmEngine {
           : 1050;
 
     const samples = p.calibSamples;
-    const amp =
+    const strokeAmp =
       samples.length > 15
         ? percentile(samples, 0.92) - percentile(samples, 0.08)
         : samples.length > 5
           ? percentile(samples, 0.85) - percentile(samples, 0.15)
           : 0.12;
 
-    const peakVels = p.calibPeakVel.filter((v) => v > 0.04);
-    // Seuil un peu plus bas → mieux suit les coups après calib
+    const amplitudeNorm = Math.max(0.065, strokeAmp, noiseAmp * 2.5);
+    const minStrokeAmp = Math.max(noiseAmp * 2.8, amplitudeNorm * 0.38, 0.045);
+
+    const peakVels = p.calibPeakVel.filter((v) => v > 0.05);
     const velThresh =
       peakVels.length >= 2
-        ? Math.max(0.1, median(peakVels) * 0.24)
-        : 0.16;
+        ? Math.max(0.14, median(peakVels) * 0.32)
+        : 0.18;
 
     const profile: PlayerRhythmProfile = {
       periodMs: clamp(periodMs, 550, 2000),
-      amplitudeNorm: Math.max(0.055, amp),
+      amplitudeNorm,
+      noiseAmp: Math.max(0.015, noiseAmp),
+      minStrokeAmp,
       thresholds: {
         stroke: velThresh,
-        idle: Math.max(0.05, velThresh * 0.22),
+        idle: Math.max(0.06, velThresh * 0.2),
       },
     };
     p.profile = profile;
@@ -336,6 +414,7 @@ export class RhythmEngine {
     p.phase = "rising";
     p.cyclePeak = -Infinity;
     p.cycleTrough = Infinity;
+    p.active = false;
     this.emit({ type: "CalibrationDone", player, profile });
 
     if (this.enabled.every((id) => this.players[id].profile !== null)) {
@@ -350,7 +429,9 @@ export class RhythmEngine {
       this.players[player].profile = {
         periodMs: 1100,
         amplitudeNorm: 0.12,
-        thresholds: { stroke: 0.16, idle: 0.05 },
+        noiseAmp: 0.02,
+        minStrokeAmp: 0.05,
+        thresholds: { stroke: 0.18, idle: 0.06 },
       };
     }
   }
