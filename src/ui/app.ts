@@ -43,7 +43,6 @@ export class App {
   private prevSnap: GameSnapshot | null = null;
   private lastPoints: Record<PlayerId, number> = { player1: 0, player2: 0 };
   private wasInFlow: Record<PlayerId, boolean> = { player1: false, player2: false };
-  private wasOverdrive: Record<PlayerId, boolean> = { player1: false, player2: false };
   private lastComboTier: Record<PlayerId, number> = { player1: 1, player2: 1 };
   private lastCountdownSec = -1;
   private matchDurationSec: MatchDurationSec = DEFAULT_MATCH_DURATION_SEC;
@@ -72,12 +71,12 @@ export class App {
             <div class="rb-hud-side rb-hud-side--left" data-panel="p1">
               <div class="rb-score rb-score--bounce" data-score="p1">0</div>
               <div class="rb-combo" data-combo="p1"></div>
-              <div class="rb-flow-badge" data-flow="p1" hidden>FLOW</div>
+              <div class="rb-flow-badge" data-flow="p1" hidden>FLOW MODE</div>
             </div>
             <div class="rb-hud-side rb-hud-side--right" data-panel="p2">
               <div class="rb-score rb-score--bounce" data-score="p2">0</div>
               <div class="rb-combo" data-combo="p2"></div>
-              <div class="rb-flow-badge" data-flow="p2" hidden>FLOW</div>
+              <div class="rb-flow-badge" data-flow="p2" hidden>FLOW MODE</div>
             </div>
           </div>
           <div class="rb-tug" data-tug-wrap>
@@ -93,7 +92,11 @@ export class App {
         </header>
         <main class="rb-main">
           <div class="rb-column rb-column--left" data-col="p1">
-            <div class="rb-energy"><div class="rb-energy-fill" data-energy="p1"></div></div>
+            <div class="rb-flow-stack">
+              <span class="rb-flow-strokes" data-flow-strokes="p1" title="Coups depuis le début">0</span>
+              <div class="rb-energy" data-flow-bar="p1"><div class="rb-energy-fill" data-energy="p1"></div></div>
+              <span class="rb-flow-caption" data-flow-caption="p1">0/7</span>
+            </div>
             <div class="rb-flash" data-flash="p1"></div>
           </div>
           <div class="rb-center">
@@ -143,7 +146,11 @@ export class App {
             </div>
           </div>
           <div class="rb-column rb-column--right" data-col="p2">
-            <div class="rb-energy"><div class="rb-energy-fill" data-energy="p2"></div></div>
+            <div class="rb-flow-stack">
+              <span class="rb-flow-strokes" data-flow-strokes="p2" title="Coups depuis le début">0</span>
+              <div class="rb-energy" data-flow-bar="p2"><div class="rb-energy-fill" data-energy="p2"></div></div>
+              <span class="rb-flow-caption" data-flow-caption="p2">0/7</span>
+            </div>
             <div class="rb-flash" data-flash="p2"></div>
           </div>
         </main>
@@ -351,7 +358,6 @@ export class App {
     this.lastCombo = { player1: 0, player2: 0 };
     this.lastComboTier = { player1: 1, player2: 1 };
     this.wasInFlow = { player1: false, player2: false };
-    this.wasOverdrive = { player1: false, player2: false };
     this.lastCountdownSec = -1;
     this.music?.stop();
     this.lastPoints = { player1: 0, player2: 0 };
@@ -417,7 +423,7 @@ export class App {
     const intensity = strength * (mult >= 5 ? 2 : mult >= 2 ? 1.4 : 1);
     this.particles?.burst(x, y, intensity, side);
     this.particles?.shockwave(x, y, hue);
-    if (stats.flow.overdrive) {
+    if (stats.flow.inFlow) {
       this.particles?.flashScreen(0.8);
       this.particles?.burst(x, y, 2, side);
     } else if (mult >= 10) {
@@ -478,21 +484,18 @@ export class App {
       const badge = this.root.querySelector<HTMLElement>(`[data-flow="${key}"]`);
       if (badge) {
         badge.hidden = !flow.inFlow;
-        badge.textContent = flow.overdrive ? "OVERDRIVE" : "FLOW";
-        badge.classList.toggle("rb-flow-badge--over", flow.overdrive);
+        badge.textContent = "FLOW MODE";
+        badge.classList.toggle("rb-flow-badge--over", flow.inFlow);
       }
 
       if (flow.inFlow && !this.wasInFlow[player]) {
         this.sound.playFlowEnter();
-      }
-      if (!flow.inFlow && this.wasInFlow[player] && flow.level < 0.35) {
-        this.sound.playFlowFade();
-      }
-      if (flow.overdrive && !this.wasOverdrive[player]) {
         this.sound.playOverdrive();
       }
+      if (!flow.inFlow && this.wasInFlow[player]) {
+        this.sound.playFlowFade();
+      }
       this.wasInFlow[player] = flow.inFlow;
-      this.wasOverdrive[player] = flow.overdrive;
     }
   }
 
@@ -513,14 +516,14 @@ export class App {
   private updateCameraAndMusic(snap: GameSnapshot): void {
     if (snap.phase !== "playing") return;
     const players = activePlayers(this.playerCount);
-    let maxFlow = 0;
-    let anyOd = false;
+    let maxIntensity = 0;
+    let anyInFlow = false;
     for (const p of players) {
       const f = p === "player1" ? snap.player1.flow : snap.player2.flow;
-      maxFlow = Math.max(maxFlow, f.level);
-      anyOd = anyOd || f.overdrive;
+      maxIntensity = Math.max(maxIntensity, f.intensity);
+      anyInFlow = anyInFlow || f.inFlow;
     }
-    this.cameraRig?.update(maxFlow, anyOd, snap.finalRush);
+    this.cameraRig?.update(maxIntensity, anyInFlow, snap.finalRush);
     this.music?.setFinalRush(snap.finalRush);
 
     const sec = Math.ceil(snap.timeLeftMs / 1000);
@@ -574,8 +577,11 @@ export class App {
 
     const e1 = this.root.querySelector<HTMLElement>('[data-energy="p1"]')!;
     const e2 = this.root.querySelector<HTMLElement>('[data-energy="p2"]')!;
-    e1.style.height = `${snap.player1.energy * 100}%`;
-    e2.style.height = `${snap.player2.energy * 100}%`;
+    e1.style.height = `${snap.player1.flow.barFill * 100}%`;
+    e2.style.height = `${snap.player2.flow.barFill * 100}%`;
+
+    this.updateFlowColumn("p1", snap.player1);
+    this.updateFlowColumn("p2", snap.player2);
 
     const knob = this.root.querySelector<HTMLElement>("[data-tug-knob]");
     if (knob) knob.style.left = `${snap.tugPercent}%`;
@@ -588,6 +594,25 @@ export class App {
     const timerEl = this.root.querySelector<HTMLElement>("[data-timer]")!;
     timerEl.textContent = `${m}:${s.toString().padStart(2, "0")}`;
     timerEl.classList.toggle("rb-timer--rush", snap.finalRush);
+  }
+
+  private updateFlowColumn(key: "p1" | "p2", stats: GameSnapshot["player1"]): void {
+    const flow = stats.flow;
+    const col = this.root.querySelector<HTMLElement>(`[data-col="${key === "p1" ? "p1" : "p2"}"]`);
+    col?.classList.toggle("rb-column--flow-active", flow.inFlow);
+
+    const strokesEl = this.root.querySelector<HTMLElement>(`[data-flow-strokes="${key}"]`);
+    if (strokesEl) strokesEl.textContent = String(stats.strokes);
+
+    const cap = this.root.querySelector<HTMLElement>(`[data-flow-caption="${key}"]`);
+    if (!cap) return;
+    if (flow.inFlow) {
+      cap.textContent = `BOOST ${flow.boostStrokesLeft}/${flow.boostStrokesTotal}`;
+      cap.classList.add("rb-flow-caption--active");
+    } else {
+      cap.textContent = `${flow.chargeProgress}/${flow.chargeRequired}`;
+      cap.classList.remove("rb-flow-caption--active");
+    }
   }
 
   private setPhaseText(text: string): void {

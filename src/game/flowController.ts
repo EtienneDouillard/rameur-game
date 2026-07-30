@@ -1,77 +1,130 @@
 import type { PlayerId } from "../types/events";
-import { multiplierForCombo } from "./combo";
+
+/** Coups réguliers consécutifs (rythme serré) pour entrer en flow */
+export const FLOW_CHARGE_STROKES = 7;
+/** Coups en flow avec multiplicateur de score */
+export const FLOW_BOOST_STROKES = 10;
+const FLOW_SCORE_MULT = 1.45;
 
 export interface FlowSnapshot {
-  /** 0–1 intensité lissée */
-  level: number;
+  /** Remplissage jauge latérale 0–1 */
+  barFill: number;
   inFlow: boolean;
-  overdrive: boolean;
+  /** Progression vers le flow (0–7) quand pas en flow */
+  chargeProgress: number;
+  chargeRequired: number;
+  /** Coups de boost restants en flow (10 → 0) */
+  boostStrokesLeft: number;
+  boostStrokesTotal: number;
+  /** Multiplicateur de score actuel (flow ou 1) */
+  scoreMultiplier: number;
+  /** Alias visuel caméra / FX (0–1) */
+  intensity: number;
 }
 
-const ENTER_STREAK = 4;
-const FLOW_ON = 0.52;
-const OVERDRIVE_ON = 0.78;
+interface PlayerFlowState {
+  charge: number;
+  inFlow: boolean;
+  boostLeft: number;
+}
 
 export class FlowController {
-  private streak: Record<PlayerId, number> = { player1: 0, player2: 0 };
-  private level: Record<PlayerId, number> = { player1: 0, player2: 0 };
+  private state: Record<PlayerId, PlayerFlowState> = {
+    player1: this.empty(),
+    player2: this.empty(),
+  };
+
+  private empty(): PlayerFlowState {
+    return { charge: 0, inFlow: false, boostLeft: 0 };
+  }
 
   reset(): void {
-    this.streak = { player1: 0, player2: 0 };
-    this.level = { player1: 0, player2: 0 };
+    this.state.player1 = this.empty();
+    this.state.player2 = this.empty();
   }
 
-  /** Appelé à chaque coup régulier ou non. Retourne le multiplicateur de score. */
-  onStroke(player: PlayerId, regular: boolean, combo: number): number {
-    if (regular) {
-      this.streak[player]++;
-      if (this.streak[player] >= ENTER_STREAK) {
-        this.level[player] = Math.min(1, this.level[player] + 0.22);
-      } else {
-        this.level[player] = Math.min(1, this.level[player] + 0.06);
+  /**
+   * @param flowRegular coup dans une fenêtre de rythme plus stricte (pour le flow)
+   */
+  onStroke(player: PlayerId, flowRegular: boolean): number {
+    const s = this.state[player];
+
+    if (s.inFlow) {
+      if (!flowRegular) {
+        this.resetPlayer(player);
+        return 1;
+      }
+      const mult = FLOW_SCORE_MULT;
+      s.boostLeft -= 1;
+      if (s.boostLeft <= 0) {
+        s.inFlow = false;
+        s.charge = 0;
+        s.boostLeft = 0;
+      }
+      return mult;
+    }
+
+    if (flowRegular) {
+      s.charge += 1;
+      if (s.charge >= FLOW_CHARGE_STROKES) {
+        s.inFlow = true;
+        s.boostLeft = FLOW_BOOST_STROKES;
+        s.charge = 0;
+        return 1;
       }
     } else {
-      this.streak[player] = 0;
-      this.level[player] = Math.max(0, this.level[player] - 0.38);
+      s.charge = 0;
     }
 
-    return this.scoreMultiplier(player, combo);
-  }
-
-  tick(dtSec: number): void {
-    const decay = 0.12 * dtSec;
-    for (const id of ["player1", "player2"] as const) {
-      if (this.level[id] > 0) {
-        this.level[id] = Math.max(0, this.level[id] - decay);
-      }
-      if (this.level[id] < 0.08) this.streak[id] = 0;
-    }
-  }
-
-  onComboBreak(player: PlayerId): void {
-    this.streak[player] = 0;
-    this.level[player] = Math.max(0, this.level[player] - 0.28);
-  }
-
-  getSnapshot(player: PlayerId, combo: number): FlowSnapshot {
-    const level = this.level[player];
-    const inFlow = level >= FLOW_ON;
-    const overdrive = inFlow && (level >= OVERDRIVE_ON || multiplierForCombo(combo) >= 10);
-    return { level, inFlow, overdrive };
-  }
-
-  scoreMultiplier(player: PlayerId, combo: number): number {
-    const snap = this.getSnapshot(player, combo);
-    if (snap.overdrive) return 1.55;
-    if (snap.inFlow) return 1.28;
     return 1;
   }
 
-  /** Énergie musique / FX globale 0–1 */
-  matchEnergy(players: PlayerId[], combos: Record<PlayerId, number>): number {
+  tick(_dtSec: number): void {
+    /* pas de décroissance passive : tout passe par les coups */
+  }
+
+  onComboBreak(player: PlayerId): void {
+    this.resetPlayer(player);
+  }
+
+  private resetPlayer(player: PlayerId): void {
+    this.state[player] = this.empty();
+  }
+
+  getSnapshot(player: PlayerId): FlowSnapshot {
+    const s = this.state[player];
+    const inFlow = s.inFlow && s.boostLeft > 0;
+
+    let barFill: number;
+    if (inFlow) {
+      barFill = s.boostLeft / FLOW_BOOST_STROKES;
+    } else {
+      barFill = s.charge / FLOW_CHARGE_STROKES;
+    }
+
+    const intensity = inFlow ? 0.55 + (s.boostLeft / FLOW_BOOST_STROKES) * 0.45 : barFill * 0.5;
+
+    return {
+      barFill,
+      inFlow,
+      chargeProgress: s.charge,
+      chargeRequired: FLOW_CHARGE_STROKES,
+      boostStrokesLeft: inFlow ? s.boostLeft : 0,
+      boostStrokesTotal: FLOW_BOOST_STROKES,
+      scoreMultiplier: inFlow ? FLOW_SCORE_MULT : 1,
+      intensity,
+    };
+  }
+
+  scoreMultiplier(player: PlayerId): number {
+    return this.getSnapshot(player).scoreMultiplier;
+  }
+
+  matchEnergy(players: PlayerId[]): number {
     let e = 0;
     for (const p of players) {
-      e = Math.max(e, this.level[p] * 0.7 + multiplierForCombo(combos[p]) / 12);
+      const snap = this.getSnapshot(p);
+      e = Math.max(e, snap.inFlow ? 0.85 : snap.barFill * 0.7);
     }
     return Math.min(1, e);
   }

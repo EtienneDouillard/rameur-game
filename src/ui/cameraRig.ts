@@ -6,13 +6,13 @@ export class CameraRig {
     this.stage = stage;
   }
 
-  update(maxFlow: number, anyOverdrive: boolean, finalRush: boolean): void {
-    const zoom = 1 + maxFlow * 0.035 + (anyOverdrive ? 0.02 : 0);
+  update(maxIntensity: number, anyInFlow: boolean, finalRush: boolean): void {
+    const zoom = 1 + maxIntensity * 0.04 + (anyInFlow ? 0.02 : 0);
     this.stage.style.setProperty("--cam-zoom", zoom.toFixed(4));
-    this.stage.classList.toggle("rb-cam-flow", maxFlow >= 0.52);
-    this.stage.classList.toggle("rb-cam-overdrive", anyOverdrive);
+    this.stage.classList.toggle("rb-cam-flow", anyInFlow || maxIntensity >= 0.45);
+    this.stage.classList.toggle("rb-cam-overdrive", anyInFlow);
     this.stage.classList.toggle("rb-cam-rush", finalRush);
-    this.stage.style.setProperty("--flow-pulse", String(0.4 + maxFlow * 0.6));
+    this.stage.style.setProperty("--flow-pulse", String(0.4 + maxIntensity * 0.6));
   }
 
   pulseHit(): void {

@@ -367,10 +367,10 @@ body {
 .rb-flow-badge {
   display: inline-block;
   margin-top: 0.2rem;
-  padding: 0.15rem 0.5rem;
+  padding: 0.2rem 0.65rem;
   font-family: var(--font-display);
-  font-size: 0.85rem;
-  letter-spacing: 0.15em;
+  font-size: 0.95rem;
+  letter-spacing: 0.12em;
   color: #041018;
   background: linear-gradient(90deg, var(--cyan), var(--gold));
   border-radius: 4px;
@@ -380,6 +380,7 @@ body {
 .rb-flow-badge--over {
   background: linear-gradient(90deg, #ff3eb5, #ffd54a);
   animation: flow-badge-pulse 0.35s ease-in-out infinite;
+  box-shadow: 0 0 20px rgba(255, 213, 74, 0.55);
 }
 
 @keyframes flow-badge-pulse {
@@ -533,10 +534,70 @@ body {
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.04), transparent);
 }
 
+.rb-flow-stack {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 100%;
+  max-width: 56px;
+  height: 100%;
+  min-height: 120px;
+  gap: 0.35rem;
+  padding: 0.25rem 0;
+}
+
+.rb-flow-strokes {
+  font-family: var(--font-display);
+  font-size: 0.95rem;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  line-height: 1;
+}
+
+.rb-flow-caption {
+  font-size: 0.62rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  text-align: center;
+  line-height: 1.15;
+  max-width: 100%;
+}
+
+.rb-flow-caption--active {
+  color: var(--gold);
+  text-shadow: 0 0 12px rgba(255, 213, 74, 0.45);
+}
+
+.rb-column--flow-active .rb-energy {
+  border-color: rgba(255, 213, 74, 0.45);
+  box-shadow: 0 0 16px rgba(255, 213, 74, 0.2);
+}
+
+.rb-column--flow-active .rb-energy-fill {
+  animation: flow-bar-pulse 0.9s ease-in-out infinite;
+}
+
+@keyframes flow-bar-pulse {
+  50% {
+    filter: brightness(1.15);
+  }
+}
+
+.rb-column--flow-active.rb-column--left .rb-energy-fill {
+  background: linear-gradient(0deg, var(--gold), var(--cyan));
+}
+
+.rb-column--flow-active.rb-column--right .rb-energy-fill {
+  background: linear-gradient(0deg, var(--gold), var(--magenta));
+}
+
 .rb-energy {
+  flex: 1;
   width: 100%;
   max-width: 48px;
-  height: 100%;
+  min-height: 80px;
   background: rgba(0, 0, 0, 0.45);
   border-radius: 999px;
   overflow: hidden;
