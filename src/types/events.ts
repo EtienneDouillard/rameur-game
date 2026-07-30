@@ -15,8 +15,11 @@ export type GameEvent =
   | { type: "ComboLost"; player: PlayerId; at: number }
   | { type: "PlayerIdle"; player: PlayerId; at: number }
   | { type: "PlayerActive"; player: PlayerId; at: number }
-  | { type: "CalibrationProgress"; player: PlayerId; progress: number }
+  | { type: "CalibrationProgress"; player: PlayerId; progress: number; phase: CalibrationUiPhase; strokesDone: number; strokesRequired: number }
   | { type: "CalibrationDone"; player: PlayerId; profile: PlayerRhythmProfile };
+
+/** État affiché pendant l'essai des rames */
+export type CalibrationUiPhase = "idle" | "strokes" | "ready";
 
 export type GameEventListener = (event: GameEvent) => void;
 
