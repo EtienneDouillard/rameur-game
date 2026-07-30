@@ -25,7 +25,7 @@ Guide détaillé : **[docs/DEPLOIEMENT-NETLIFY.md](docs/DEPLOIEMENT-NETLIFY.md)*
 |--------|---------|
 | Vision (caméra, dual-ROI MoveNet) | `src/vision/` |
 | Événements (rythme, calibration 10 coups) | `src/events/` |
-| Gameplay (90 s, score, combo) | `src/game/` |
+| Gameplay (durée réglable, score, combo) | `src/game/` |
 | UI + particules + audio | `src/ui/`, `src/audio/` |
 
 Documentation : [`docs/ARCHITECTURE-TECHNIQUE.md`](docs/ARCHITECTURE-TECHNIQUE.md), [`docs/PHASE1-ETUDE-COMPARATIVE.md`](docs/PHASE1-ETUDE-COMPARATIVE.md).
@@ -33,6 +33,7 @@ Documentation : [`docs/ARCHITECTURE-TECHNIQUE.md`](docs/ARCHITECTURE-TECHNIQUE.m
 ## Règles (résumé)
 
 README.md
+- Durée de séance choisie à la **roulette** de l'accueil : de **30 s à 30 min** (le choix est retenu d'une fois sur l'autre).
 - Un point par **coup complet**, compté au tirage (rien au retour).
 - Score basé sur régularité et **combo** (×1 → ×4), gardé lisible (quelques centaines de points par manche).
 - Rythme irrégulier : combo à zéro.

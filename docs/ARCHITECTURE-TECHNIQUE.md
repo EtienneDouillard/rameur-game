@@ -189,7 +189,8 @@ La **régularité** (écart à la période attendue) est calculée ici ou dans l
 
 ### 5.1 Session
 
-- Durée fixe : **90 000 ms** (`performance.now()` ou horloge dédiée).  
+- Durée réglable à la roulette de l'accueil : de **30 s à 30 min** (`MATCH_DURATION_OPTIONS`),
+  90 s par défaut, choix mémorisé dans `localStorage` (`row-battle-duration`).  
 - États : `calibrating` → `playing` → `results`.
 
 ### 5.2 Score (concept)
