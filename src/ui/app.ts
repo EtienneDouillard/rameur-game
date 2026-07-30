@@ -1047,8 +1047,11 @@ export class App {
         if (footer) {
           let text = `${fps} poses/s · ${this.vision?.getBackend() ?? ""}`;
           if (this.debugMode) {
+            text += ` · miroir:${this.vision?.isMirrored() ? "on" : "off"}`;
             for (const p of activePlayers(this.playerCount)) {
-              text += ` | ${p === "player1" ? "P1" : "P2"} ${this.rhythm.getDiagnostics(p)}`;
+              const cx = this.vision?.getCenterX(p) ?? -1;
+              const pos = cx < 0 ? "—" : cx.toFixed(2);
+              text += ` | ${p === "player1" ? "P1(gauche)" : "P2(droite)"} x:${pos} ${this.rhythm.getDiagnostics(p)}`;
             }
           }
           footer.textContent = text;
