@@ -44,7 +44,31 @@ export class PoseVision {
 
   /** Aligné sur l’option « retourner la vidéo » (miroir d’affichage) */
   setFlipHorizontal(on: boolean): void {
+    if (this.flipHorizontal === on) return;
     this.flipHorizontal = on;
+    // Évite d’attribuer l’ancienne pose au mauvais côté juste après un bascule.
+    this.lastLandmarks = { player1: [], player2: [] };
+  }
+
+  /**
+   * Côté ÉCRAN : player1 = bâbord (gauche), player2 = tribord (droite).
+   * Avec miroir CSS, la gauche du canvas brut apparaît à droite de l’écran —
+   * on inverse donc le mapping ROI → joueur.
+   */
+  private screenSideRois(): {
+    left: { player: PlayerId; roi: typeof ROI_LEFT };
+    right: { player: PlayerId; roi: typeof ROI_RIGHT };
+  } {
+    if (this.flipHorizontal) {
+      return {
+        left: { player: "player1", roi: ROI_RIGHT },
+        right: { player: "player2", roi: ROI_LEFT },
+      };
+    }
+    return {
+      left: { player: "player1", roi: ROI_LEFT },
+      right: { player: "player2", roi: ROI_RIGHT },
+    };
   }
 
   async init(): Promise<void> {
@@ -136,7 +160,13 @@ export class PoseVision {
         flipHorizontal: this.flipHorizontal,
         maxPoses: this.playerCount,
       });
-      const assigned = assignMultipose(poses, vw, vh, this.playerCount);
+      const assigned = assignMultipose(
+        poses,
+        vw,
+        vh,
+        this.playerCount,
+        this.flipHorizontal,
+      );
       for (const [player, landmarks] of assigned) {
         if (landmarks.length) {
           this.lastLandmarks[player] = landmarks;
@@ -157,11 +187,11 @@ export class PoseVision {
       }
     } else {
       // Alternate ROI : 1 joueur par frame → ~2× FPS effectif par joueur
+      // Mapping selon le côté ÉCRAN (miroir ou non).
       this.dualToggle = 1 - this.dualToggle;
-      const active: { player: PlayerId; roi: typeof ROI_LEFT } =
-        this.dualToggle === 0
-          ? { player: "player1", roi: ROI_LEFT }
-          : { player: "player2", roi: ROI_RIGHT };
+      const sides = this.screenSideRois();
+      const active =
+        this.dualToggle === 0 ? sides.left : sides.right;
 
       const landmarks = await this.estimateRoi(ctx, vw, vh, active.roi, detector);
       if (landmarks.length) this.lastLandmarks[active.player] = landmarks;
@@ -217,22 +247,25 @@ function assignMultipose(
   frameWidth: number,
   frameHeight: number,
   playerCount: PlayerCount,
+  _flipHorizontal: boolean,
 ): Map<PlayerId, PoseLandmark[]> {
   const result = new Map<PlayerId, PoseLandmark[]>([
     ["player1", []],
     ["player2", []],
   ]);
 
+  // Avec flipHorizontal aligné sur le miroir CSS, les x TF sont déjà
+  // en coordonnées écran (gauche = petit x). Tri croissant = bâbord → tribord.
   const scored = poses
     .map((p) => {
       const kps = p.keypoints ?? [];
       const valid = kps.filter((k) => (k.score ?? 0) > 0.15);
       if (!valid.length) return null;
       const cx = valid.reduce((s, k) => s + (k.x ?? 0), 0) / valid.length;
-      return { kps, normX: cx / frameWidth };
+      return { kps, screenX: cx / frameWidth };
     })
     .filter((x): x is NonNullable<typeof x> => x !== null)
-    .sort((a, b) => a.normX - b.normX);
+    .sort((a, b) => a.screenX - b.screenX);
 
   const norm = (kp: poseDetection.Keypoint): PoseLandmark => ({
     x: (kp.x ?? 0) / frameWidth,
@@ -247,8 +280,7 @@ function assignMultipose(
   if (playerCount === 2 && scored.length >= 2) {
     result.set("player2", scored[1].kps.map(norm));
   } else if (playerCount === 2 && scored.length === 1) {
-    // Une seule pose : assigner selon position gauche/droite
-    if (scored[0].normX > 0.55) {
+    if (scored[0].screenX > 0.55) {
       result.set("player1", []);
       result.set("player2", scored[0].kps.map(norm));
     }
