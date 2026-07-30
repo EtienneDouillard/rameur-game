@@ -50,7 +50,10 @@ export class App {
   private matchDurationSec: MatchDurationSec = DEFAULT_MATCH_DURATION_SEC;
   private audioMusicOn = true;
   private audioSfxOn = true;
-  private odyssey = new OdysseyVoice();
+  private odyssey: Record<PlayerId, OdysseyVoice> = {
+    player1: new OdysseyVoice(),
+    player2: new OdysseyVoice(),
+  };
   private lastCharge: Record<PlayerId, number> = { player1: 0, player2: 0 };
 
   constructor(root: HTMLElement, video: HTMLVideoElement) {
@@ -81,18 +84,20 @@ export class App {
               <div class="rb-score rb-score--bounce" data-score="p1">0</div>
               <div class="rb-combo" data-combo="p1"></div>
               <div class="rb-flow-badge" data-flow="p1" hidden>VENT ARRIÈRE</div>
+              <p class="rb-player-hint" data-play-hint="p1" hidden></p>
             </div>
             <div class="rb-hud-side rb-hud-side--right" data-panel="p2">
               <div class="rb-score rb-score--bounce" data-score="p2">0</div>
               <div class="rb-combo" data-combo="p2"></div>
               <div class="rb-flow-badge" data-flow="p2" hidden>VENT ARRIÈRE</div>
+              <p class="rb-player-hint" data-play-hint="p2" hidden></p>
             </div>
           </div>
           <div class="rb-tug" data-tug-wrap>
             <div class="rb-tug-track">
               <div class="rb-tug-fill rb-tug-fill--left"></div>
               <div class="rb-tug-fill rb-tug-fill--right"></div>
-              <div class="rb-tug-knob" data-tug-knob></div>
+              <div class="rb-tug-ship" data-tug-ship aria-hidden="true"></div>
             </div>
           </div>
           <div class="rb-timer" data-timer>1:30</div>
@@ -151,9 +156,7 @@ export class App {
                 <div class="rb-calib-bar" data-calib-wrap="p2"><span data-calib="p2"></span></div>
               </div>
             </div>
-            <div class="rb-screen rb-screen--play" data-screen="play">
-              <p class="rb-play-hint" data-play-hint hidden>À l'unisson, marins !</p>
-            </div>
+            <div class="rb-screen rb-screen--play" data-screen="play"></div>
             <div class="rb-screen" data-screen="end">
               <h2 data-winner>Victoire</h2>
               <div class="rb-results">
@@ -384,7 +387,8 @@ export class App {
     this.lastComboTier = { player1: 1, player2: 1 };
     this.wasInFlow = { player1: false, player2: false };
     this.lastCharge = { player1: 0, player2: 0 };
-    this.odyssey.reset();
+    this.odyssey.player1.reset();
+    this.odyssey.player2.reset();
     this.lastCountdownSec = -1;
     this.music?.stop();
     this.lastPoints = { player1: 0, player2: 0 };
@@ -509,21 +513,16 @@ export class App {
         const badge = this.root.querySelector<HTMLElement>(`[data-flow="${key}"]`);
         if (badge) badge.hidden = true;
       }
-      this.hidePlayHint();
+      this.hidePlayHints();
       return;
     }
-
-    let justEntered = false;
-    let justLeft = false;
-    let justBroke = false;
-    let bestCharge = 0;
-    let anyInFlow = false;
 
     for (const player of activePlayers(this.playerCount)) {
       const stats = player === "player1" ? snap.player1 : snap.player2;
       const f = stats.flow;
       const key = player === "player1" ? "p1" : "p2";
       const inBoost = f.inFlow && f.boostStrokesLeft > 0;
+
       const badge = this.root.querySelector<HTMLElement>(`[data-flow="${key}"]`);
       if (badge) {
         badge.hidden = !inBoost;
@@ -533,61 +532,68 @@ export class App {
         badge.classList.toggle("rb-flow-badge--over", inBoost);
       }
 
-      if (inBoost && !this.wasInFlow[player]) {
-        justEntered = true;
+      const justEntered = inBoost && !this.wasInFlow[player];
+      const justLeft = !inBoost && this.wasInFlow[player];
+      const justBroke =
+        f.chargeProgress < this.lastCharge[player] && !inBoost && !this.wasInFlow[player];
+
+      if (justEntered) {
         this.sound.playFlowEnter();
         this.sound.playOverdrive();
       }
-      if (!inBoost && this.wasInFlow[player]) {
-        justLeft = true;
+      if (justLeft) {
         this.sound.playFlowFade();
-      }
-      if (f.chargeProgress < this.lastCharge[player] && !inBoost && !this.wasInFlow[player]) {
-        justBroke = true;
       }
 
       this.wasInFlow[player] = inBoost;
       this.lastCharge[player] = f.chargeProgress;
-      bestCharge = Math.max(bestCharge, inBoost ? 7 : f.chargeProgress);
-      if (inBoost) anyInFlow = true;
+
+      const hint = this.root.querySelector<HTMLElement>(`[data-play-hint="${key}"]`);
+      if (!hint) continue;
+
+      if (inBoost) {
+        hint.hidden = true;
+        hint.textContent = "";
+        continue;
+      }
+
+      const line = this.odyssey[player].lineFor(player, this.playerCount, {
+        charge: f.chargeProgress,
+        inFlow: false,
+        justEnteredFlow: justEntered,
+        justLeftFlow: justLeft,
+        justBroke,
+        finalRush: snap.finalRush,
+      });
+
+      if (line) {
+        hint.hidden = false;
+        hint.textContent = line;
+        hint.classList.toggle("rb-player-hint--hot", f.chargeProgress >= 5);
+      } else {
+        hint.hidden = true;
+        hint.classList.remove("rb-player-hint--hot");
+      }
     }
 
     for (const key of ["p1", "p2"] as const) {
       if (this.playerCount === 1 && key === "p2") {
         const b = this.root.querySelector<HTMLElement>(`[data-flow="${key}"]`);
+        const h = this.root.querySelector<HTMLElement>(`[data-play-hint="${key}"]`);
         if (b) b.hidden = true;
-      }
-    }
-
-    const line = this.odyssey.lineFor({
-      charge: bestCharge,
-      inFlow: anyInFlow,
-      justEnteredFlow: justEntered,
-      justLeftFlow: justLeft && !anyInFlow,
-      justBroke: justBroke && !anyInFlow && !justEntered,
-      finalRush: snap.finalRush,
-    });
-
-    const hint = this.root.querySelector<HTMLElement>("[data-play-hint]");
-    if (hint) {
-      // Pas de texte central pendant le boost : le badge VENT ARRIÈRE suffit
-      if (line && !anyInFlow) {
-        hint.hidden = false;
-        hint.textContent = line;
-        hint.classList.toggle("rb-play-hint--flow", false);
-        hint.classList.toggle("rb-play-hint--hot", bestCharge >= 5);
-      } else {
-        hint.hidden = true;
-        hint.classList.remove("rb-play-hint--flow", "rb-play-hint--hot");
+        if (h) h.hidden = true;
       }
     }
   }
 
-  private hidePlayHint(): void {
-    const hint = this.root.querySelector<HTMLElement>("[data-play-hint]");
-    if (hint) {
-      hint.hidden = true;
-      hint.classList.remove("rb-play-hint--flow", "rb-play-hint--hot");
+  private hidePlayHints(): void {
+    for (const key of ["p1", "p2"] as const) {
+      const hint = this.root.querySelector<HTMLElement>(`[data-play-hint="${key}"]`);
+      if (hint) {
+        hint.hidden = true;
+        hint.textContent = "";
+        hint.classList.remove("rb-player-hint--hot");
+      }
     }
   }
 
@@ -675,8 +681,8 @@ export class App {
     this.updateFlowColumn("p1", snap.player1);
     this.updateFlowColumn("p2", snap.player2);
 
-    const knob = this.root.querySelector<HTMLElement>("[data-tug-knob]");
-    if (knob) knob.style.left = `${snap.tugPercent}%`;
+    const ship = this.root.querySelector<HTMLElement>("[data-tug-ship]");
+    if (ship) ship.style.left = `${snap.tugPercent}%`;
     const tug = this.root.querySelector<HTMLElement>("[data-tug-wrap]");
     if (tug) tug.hidden = this.playerCount === 1;
 

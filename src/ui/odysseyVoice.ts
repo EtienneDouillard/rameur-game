@@ -107,20 +107,24 @@ export class OdysseyVoice {
    * Retourne la phrase à afficher (ou null pour cacher).
    * Visible dès 1/7, plus intense vers 7/7 et en flow.
    */
-  lineFor(opts: {
-    charge: number;
-    inFlow: boolean;
-    justEnteredFlow: boolean;
-    justLeftFlow: boolean;
-    justBroke: boolean;
-    finalRush: boolean;
-    now?: number;
-  }): string | null {
+  lineFor(
+    player: "player1" | "player2",
+    playerCount: 1 | 2,
+    opts: {
+      charge: number;
+      inFlow: boolean;
+      justEnteredFlow: boolean;
+      justLeftFlow: boolean;
+      justBroke: boolean;
+      finalRush: boolean;
+      now?: number;
+    },
+  ): string | null {
     const now = opts.now ?? performance.now();
 
     if (opts.justBroke) {
       this.lastMoment = "break";
-      this.lastLine = pick(LINES.break);
+      this.lastLine = pick(this.linesFor("break", player, playerCount));
       this.lastChangeAt = now;
       this.enterAnnounced = false;
       return this.lastLine;
@@ -128,7 +132,7 @@ export class OdysseyVoice {
 
     if (opts.justLeftFlow) {
       this.lastMoment = "flow_end";
-      this.lastLine = pick(LINES.flow_end);
+      this.lastLine = pick(this.linesFor("flow_end", player, playerCount));
       this.lastChangeAt = now;
       this.enterAnnounced = false;
       return this.lastLine;
@@ -137,7 +141,7 @@ export class OdysseyVoice {
     if (opts.justEnteredFlow || (opts.inFlow && !this.enterAnnounced)) {
       this.enterAnnounced = true;
       this.lastMoment = "flow_enter";
-      this.lastLine = pick(LINES.flow_enter);
+      this.lastLine = pick(this.linesFor("flow_enter", player, playerCount));
       this.lastChangeAt = now;
       return this.lastLine;
     }
@@ -156,12 +160,58 @@ export class OdysseyVoice {
           : 2400;
 
     if (moment !== this.lastMoment || now - this.lastChangeAt > minHold) {
-      const pool = LINES[moment];
+      const pool = this.linesFor(moment, player, playerCount);
       this.lastLine = pick(pool, this.lastLine);
       this.lastMoment = moment;
       this.lastChangeAt = now;
     }
 
     return this.lastLine;
+  }
+
+  private linesFor(
+    moment: Exclude<OdysseyMoment, "idle">,
+    player: "player1" | "player2",
+    playerCount: 1 | 2,
+  ): string[] {
+    if (playerCount === 2) {
+      const duo: Partial<Record<typeof moment, { p1: string[]; p2: string[] }>> = {
+        charge_low: {
+          p1: ["Ramez, bâbord !", "Marin de gauche, en avant.", "Posez la rame, bâbord."],
+          p2: ["Ramez, tribord !", "Marin de droite, en avant.", "Posez la rame, tribord."],
+        },
+        charge_mid: {
+          p1: ["Tenez bâbord, marin !", "La vague vous porte à gauche.", "Ulysse compte sur vous, bâbord."],
+          p2: ["Tenez tribord, marin !", "La vague vous porte à droite.", "Ulysse compte sur vous, tribord."],
+        },
+        charge_high: {
+          p1: ["Encore, bâbord ! Le vent vient…", "Ithaque pour la gauche !", "Serrons le rythme, bâbord !"],
+          p2: ["Encore, tribord ! Le vent vient…", "Ithaque pour la droite !", "Serrons le rythme, tribord !"],
+        },
+        flow_enter: {
+          p1: ["VENT ARRIÈRE — bâbord !", "Voile ouverte à bâbord !"],
+          p2: ["VENT ARRIÈRE — tribord !", "Voile ouverte à tribord !"],
+        },
+        flow_boost: {
+          p1: ["Surfez, marin de bâbord !", "La mer obéit à gauche !", "Gardez ce vent, bâbord !"],
+          p2: ["Surfez, marin de tribord !", "La mer obéit à droite !", "Gardez ce vent, tribord !"],
+        },
+        flow_end: {
+          p1: ["Le vent faiblit à bâbord…", "Reprenez, marin de gauche."],
+          p2: ["Le vent faiblit à tribord…", "Reprenez, marin de droite."],
+        },
+        break: {
+          p1: ["Ne lâchez pas, bâbord !", "Relevez la rame, marin de gauche."],
+          p2: ["Ne lâchez pas, tribord !", "Relevez la rame, marin de droite."],
+        },
+        final_rush: {
+          p1: ["DERNIÈRE LIGNE — bâbord !", "Tout donner à gauche !"],
+          p2: ["DERNIÈRE LIGNE — tribord !", "Tout donner à droite !"],
+        },
+      };
+      const block = duo[moment];
+      if (block) return player === "player1" ? block.p1 : block.p2;
+    }
+    return LINES[moment];
   }
 }
