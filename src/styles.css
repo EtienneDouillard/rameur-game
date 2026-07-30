@@ -780,6 +780,8 @@ body {
 
 .rb-mode-picker {
   display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
   gap: 0.5rem;
   margin-bottom: 0.5rem;
 }

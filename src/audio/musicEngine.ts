@@ -18,6 +18,17 @@ export class MusicEngine {
   private smoothEnergy = 0.12;
   private finalRush = false;
 
+  setBpm(bpm: number): void {
+    this.bpm = Math.min(160, Math.max(80, Math.round(bpm)));
+    const root = 110 * (this.bpm / 118);
+    if (this.padOsc) this.padOsc.frequency.setTargetAtTime(root, this.ctx.currentTime, 0.08);
+    if (this.padOsc2) this.padOsc2.frequency.setTargetAtTime(root * 1.5, this.ctx.currentTime, 0.08);
+  }
+
+  getBpm(): number {
+    return this.bpm;
+  }
+
   constructor(ctx: AudioContext) {
     this.ctx = ctx;
     this.master = ctx.createGain();

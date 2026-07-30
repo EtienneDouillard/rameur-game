@@ -4,6 +4,8 @@ import { activePlayers } from "../types/gameMode";
 import { RhythmEngine } from "../events/rhythmEngine";
 import {
   GameSession,
+  comboLabel,
+  multiplierForCombo,
   type GameSnapshot,
 } from "../game/gameSession";
 import { SoundEngine } from "../audio/soundEngine";
@@ -13,7 +15,12 @@ import { ParticleField } from "./particles";
 import { VideoStageFx } from "./videoStageFx";
 import { CameraRig } from "./cameraRig";
 import { MusicEngine } from "../audio/musicEngine";
-import { multiplierForCombo, comboLabel } from "../game/gameSession";
+import {
+  DEFAULT_MATCH_DURATION_SEC,
+  formatMatchTimer,
+  MATCH_DURATION_OPTIONS,
+  type MatchDurationSec,
+} from "../types/matchDuration";
 
 export class App {
   private root: HTMLElement;
@@ -38,6 +45,7 @@ export class App {
   private wasOverdrive: Record<PlayerId, boolean> = { player1: false, player2: false };
   private lastComboTier: Record<PlayerId, number> = { player1: 1, player2: 1 };
   private lastCountdownSec = -1;
+  private matchDurationSec: MatchDurationSec = DEFAULT_MATCH_DURATION_SEC;
 
   constructor(root: HTMLElement, video: HTMLVideoElement) {
     this.root = root;
@@ -95,6 +103,13 @@ export class App {
                 <button type="button" class="rb-mode" data-mode="2">2 joueurs</button>
               </div>
               <p class="rb-mode-hint" data-mode-hint>Solo : placez-vous au centre du cadre.</p>
+              <p class="rb-mode-label">Durée de la partie</p>
+              <div class="rb-mode-picker" role="group" aria-label="Durée">
+                ${MATCH_DURATION_OPTIONS.map(
+                  (sec) =>
+                    `<button type="button" class="rb-mode rb-duration" data-duration="${sec}">${sec}s</button>`,
+                ).join("")}
+              </div>
               <p class="rb-privacy">La vidéo reste sur cet appareil.</p>
               <button type="button" class="rb-btn rb-btn--primary" data-action="start">Jouer</button>
               <p class="rb-hint" data-load-status></p>
@@ -155,7 +170,11 @@ export class App {
     this.root.querySelectorAll<HTMLButtonElement>("[data-mode]").forEach((btn) => {
       btn.onclick = () => this.setPlayerCount(Number(btn.dataset.mode) as PlayerCount);
     });
+    this.root.querySelectorAll<HTMLButtonElement>("[data-duration]").forEach((btn) => {
+      btn.onclick = () => this.setMatchDuration(Number(btn.dataset.duration) as MatchDurationSec);
+    });
     this.setPlayerCount(1);
+    this.setMatchDuration(DEFAULT_MATCH_DURATION_SEC);
 
     this.root.querySelector<HTMLButtonElement>('[data-action="start"]')!.onclick = () =>
       void this.boot();
@@ -178,6 +197,15 @@ export class App {
       count === 1
         ? "Solo : placez-vous au centre du cadre."
         : "Duo : joueur 1 à gauche, joueur 2 à droite.";
+  }
+
+  private setMatchDuration(sec: MatchDurationSec): void {
+    this.matchDurationSec = sec;
+    this.root.querySelectorAll<HTMLButtonElement>("[data-duration]").forEach((btn) => {
+      btn.classList.toggle("rb-mode--active", Number(btn.dataset.duration) === sec);
+    });
+    const timerEl = this.root.querySelector<HTMLElement>("[data-timer]");
+    if (timerEl) timerEl.textContent = formatMatchTimer(sec);
   }
 
   private showScreen(name: "start" | "calib" | "play" | "end"): void {
@@ -257,7 +285,7 @@ export class App {
     this.vision?.setPlayerCount(this.playerCount);
     this.showScreen("calib");
     this.setPhaseText("Calibration…");
-    this.game.beginCalibration(this.playerCount);
+    this.game.beginCalibration(this.playerCount, this.matchDurationSec);
     this.rhythm.startCalibration(this.playerCount);
   }
 

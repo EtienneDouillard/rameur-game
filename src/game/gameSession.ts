@@ -1,10 +1,10 @@
 import type { GameEvent, PlayerId } from "../types/events";
 import type { PlayerCount } from "../types/gameMode";
 import { activePlayers } from "../types/gameMode";
+import { DEFAULT_MATCH_DURATION_SEC, type MatchDurationSec } from "../types/matchDuration";
 import { FlowController, type FlowSnapshot } from "./flowController";
 import { multiplierForCombo } from "./combo";
 
-const GAME_DURATION_MS = 90_000;
 const FINAL_RUSH_MS = 10_000;
 
 export interface PlayerStats {
@@ -25,6 +25,7 @@ export interface GameSnapshot {
   player2: PlayerStats;
   tugPercent: number;
   finalRush: boolean;
+  matchDurationSec: number;
 }
 
 type SnapshotListener = (snap: GameSnapshot) => void;
@@ -57,6 +58,15 @@ export class GameSession {
   private playerCount: PlayerCount = 2;
   private flow = new FlowController();
   private lastTick = 0;
+  private matchDurationMs = DEFAULT_MATCH_DURATION_SEC * 1000;
+
+  setMatchDurationSec(sec: MatchDurationSec): void {
+    this.matchDurationMs = sec * 1000;
+  }
+
+  getMatchDurationSec(): number {
+    return this.matchDurationMs / 1000;
+  }
 
   onSnapshot(listener: SnapshotListener): () => void {
     this.snapshotListeners.add(listener);
@@ -67,11 +77,12 @@ export class GameSession {
     return this.phase;
   }
 
-  beginCalibration(playerCount: PlayerCount = 2): void {
+  beginCalibration(playerCount: PlayerCount = 2, durationSec: MatchDurationSec = DEFAULT_MATCH_DURATION_SEC): void {
     this.phase = "calibrating";
     this.stats.player1 = emptyStats();
     this.stats.player2 = emptyStats();
     this.playerCount = playerCount;
+    this.matchDurationMs = durationSec * 1000;
     this.flow.reset();
     this.broadcast();
   }
@@ -120,7 +131,7 @@ export class GameSession {
     this.lastTick = now;
 
     const elapsed = now - this.playStart;
-    if (elapsed >= GAME_DURATION_MS) {
+    if (elapsed >= this.matchDurationMs) {
       this.phase = "finished";
       this.broadcast();
       return;
@@ -200,8 +211,8 @@ export class GameSession {
 
   getSnapshot(): GameSnapshot {
     const elapsed =
-      this.phase === "playing" ? performance.now() - this.playStart : GAME_DURATION_MS;
-    const timeLeftMs = Math.max(0, GAME_DURATION_MS - elapsed);
+      this.phase === "playing" ? performance.now() - this.playStart : this.matchDurationMs;
+    const timeLeftMs = Math.max(0, this.matchDurationMs - elapsed);
     const finalRush = timeLeftMs <= FINAL_RUSH_MS && this.phase === "playing";
 
     const s1 = this.stats.player1.score;
@@ -216,6 +227,7 @@ export class GameSession {
       player2: { ...this.stats.player2, flow: { ...this.stats.player2.flow } },
       tugPercent,
       finalRush,
+      matchDurationSec: this.matchDurationMs / 1000,
     };
   }
 
