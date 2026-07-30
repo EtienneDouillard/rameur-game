@@ -208,7 +208,6 @@ body {
   width: 100%;
   height: 100%;
   object-fit: cover;
-  transform: scaleX(-1);
 }
 
 .rb-video-fx {
@@ -296,6 +295,61 @@ body {
 
 .rb--1p .rb-video-divider {
   display: none;
+}
+
+/* Messages Ulysse centrés sur chaque moitié de la caméra */
+.rb-video-hints {
+  position: absolute;
+  inset: 0;
+  z-index: 14;
+  pointer-events: none;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+}
+
+.rb-video-hint-zone {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 0.65rem;
+}
+
+.rb-video-hint {
+  margin: 0;
+  text-align: center;
+  font-family: var(--font-display);
+  font-size: clamp(1.4rem, 6.2vw, 2.85rem);
+  letter-spacing: 0.07em;
+  line-height: 1.12;
+  color: var(--gold);
+  text-shadow:
+    0 0 32px rgba(0, 0, 0, 0.95),
+    0 3px 22px rgba(0, 0, 0, 0.9);
+  max-width: min(46vw, 400px);
+  animation: pulse-hint 1.35s ease-in-out infinite;
+}
+
+.rb-video-hint[hidden] {
+  display: none !important;
+}
+
+.rb-video-hint--hot {
+  color: #f0e6c8;
+  font-size: clamp(1.55rem, 6.8vw, 3.05rem);
+  animation: pulse-hint 0.75s ease-in-out infinite;
+}
+
+.rb--1p .rb-video-hints {
+  grid-template-columns: 1fr;
+}
+
+.rb--1p .rb-video-hint-zone--right {
+  display: none;
+}
+
+.rb--1p .rb-video-hint {
+  max-width: min(88vw, 520px);
+  font-size: clamp(1.5rem, 7vw, 3.1rem);
 }
 
 .rb[data-combo-fx="3"] .rb-video-stage::after,

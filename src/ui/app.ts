@@ -71,6 +71,14 @@ export class App {
           <canvas class="rb-video-rings" aria-hidden="true"></canvas>
           <div class="rb-video-scanlines" aria-hidden="true"></div>
           <div class="rb-video-divider" data-video-divider aria-hidden="true"></div>
+          <div class="rb-video-hints" aria-live="polite">
+            <div class="rb-video-hint-zone rb-video-hint-zone--left">
+              <p class="rb-video-hint" data-play-hint="p1" hidden></p>
+            </div>
+            <div class="rb-video-hint-zone rb-video-hint-zone--right">
+              <p class="rb-video-hint" data-play-hint="p2" hidden></p>
+            </div>
+          </div>
         </div>
         <div class="rb-odyssey-layer" aria-hidden="true">
           <div class="rb-odyssey-horizon"></div>
@@ -84,13 +92,11 @@ export class App {
               <div class="rb-score rb-score--bounce" data-score="p1">0</div>
               <div class="rb-combo" data-combo="p1"></div>
               <div class="rb-flow-badge" data-flow="p1" hidden>VENT ARRIÈRE</div>
-              <p class="rb-player-hint" data-play-hint="p1" hidden></p>
             </div>
             <div class="rb-hud-side rb-hud-side--right" data-panel="p2">
               <div class="rb-score rb-score--bounce" data-score="p2">0</div>
               <div class="rb-combo" data-combo="p2"></div>
               <div class="rb-flow-badge" data-flow="p2" hidden>VENT ARRIÈRE</div>
-              <p class="rb-player-hint" data-play-hint="p2" hidden></p>
             </div>
           </div>
           <div class="rb-tug" data-tug-wrap>
@@ -579,10 +585,10 @@ export class App {
       if (line) {
         hint.hidden = false;
         hint.textContent = line;
-        hint.classList.toggle("rb-player-hint--hot", f.chargeProgress >= 5);
+        hint.classList.toggle("rb-video-hint--hot", f.chargeProgress >= 5);
       } else {
         hint.hidden = true;
-        hint.classList.remove("rb-player-hint--hot");
+        hint.classList.remove("rb-video-hint--hot");
       }
     }
 
@@ -602,7 +608,7 @@ export class App {
       if (hint) {
         hint.hidden = true;
         hint.textContent = "";
-        hint.classList.remove("rb-player-hint--hot");
+        hint.classList.remove("rb-video-hint--hot");
       }
     }
   }
