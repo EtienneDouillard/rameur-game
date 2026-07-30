@@ -1,11 +1,15 @@
 :root {
-  --bg: #070b14;
-  --bg-panel: #0f1628;
-  --cyan: #3ee8ff;
-  --magenta: #ff3eb5;
-  --gold: #ffd54a;
-  --text: #f4f7ff;
-  --muted: #8b9bb8;
+  --bg: #030c12;
+  --bg-panel: #0a1a22;
+  --sea-deep: #062a38;
+  --sea-mid: #0e4a5c;
+  --cyan: #6ec4d8;
+  --magenta: #b8323a;
+  --sail-red: #a4161a;
+  --gold: #d4a84b;
+  --bronze: #c9a227;
+  --text: #e8eef4;
+  --muted: #7a9aab;
   --font-display: "Bebas Neue", system-ui, sans-serif;
   --font-body: "Outfit", system-ui, sans-serif;
 }
@@ -48,6 +52,71 @@ body {
     env(safe-area-inset-left, 0);
 }
 
+/* Ambiance mer / Odyssée (couche au-dessus de la vidéo) */
+.rb-odyssey-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.rb-odyssey-horizon {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    180deg,
+    rgba(2, 12, 20, 0.72) 0%,
+    rgba(6, 42, 56, 0.35) 38%,
+    rgba(8, 55, 70, 0.55) 62%,
+    rgba(3, 18, 28, 0.85) 100%
+  );
+}
+
+.rb-odyssey-waves {
+  position: absolute;
+  left: -10%;
+  right: -10%;
+  bottom: -2%;
+  height: 28%;
+  opacity: 0.35;
+  background: repeating-linear-gradient(
+    -4deg,
+    transparent,
+    transparent 18px,
+    rgba(110, 196, 216, 0.07) 18px,
+    rgba(110, 196, 216, 0.07) 22px
+  );
+  animation: odyssey-waves 8s ease-in-out infinite;
+}
+
+@keyframes odyssey-waves {
+  0%,
+  100% {
+    transform: translateX(0) translateY(0);
+  }
+  50% {
+    transform: translateX(-3%) translateY(-4px);
+  }
+}
+
+.rb-odyssey-grain {
+  position: absolute;
+  inset: 0;
+  opacity: 0.06;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  mix-blend-mode: overlay;
+}
+
+.rb--live .rb-odyssey-horizon {
+  background: linear-gradient(
+    180deg,
+    rgba(2, 12, 20, 0.45) 0%,
+    rgba(6, 42, 56, 0.2) 40%,
+    rgba(12, 30, 40, 0.5) 100%
+  );
+}
+
 .rb-video-stage {
   position: absolute;
   inset: 0;
@@ -66,10 +135,10 @@ body {
 @keyframes flow-vignette {
   0%,
   100% {
-    box-shadow: inset 0 0 80px rgba(62, 232, 255, 0.12);
+    box-shadow: inset 0 0 90px rgba(164, 22, 26, 0.15);
   }
   50% {
-    box-shadow: inset 0 0 100px rgba(255, 213, 74, 0.2);
+    box-shadow: inset 0 0 110px rgba(212, 168, 75, 0.22);
   }
 }
 
@@ -147,19 +216,19 @@ body {
   pointer-events: none;
   background: linear-gradient(
     180deg,
-    rgba(7, 11, 20, 0.55) 0%,
-    rgba(7, 11, 20, 0.15) 35%,
-    rgba(7, 11, 20, 0.35) 100%
+    rgba(2, 14, 22, 0.6) 0%,
+    rgba(6, 42, 56, 0.2) 40%,
+    rgba(3, 20, 32, 0.55) 100%
   );
-  transition: background 0.15s ease;
+  transition: background 0.4s ease;
 }
 
 .rb--live .rb-video-fx {
   background: linear-gradient(
     180deg,
-    rgba(7, 11, 20, 0.35) 0%,
-    rgba(7, 11, 20, 0.05) 40%,
-    rgba(7, 11, 20, 0.25) 100%
+    rgba(2, 14, 22, 0.38) 0%,
+    rgba(6, 50, 65, 0.12) 45%,
+    rgba(4, 24, 36, 0.42) 100%
   );
 }
 
@@ -172,7 +241,7 @@ body {
     box-shadow: inset 0 0 0 0 transparent;
   }
   30% {
-    box-shadow: inset 0 0 80px 20px rgba(62, 232, 255, 0.35);
+    box-shadow: inset 0 0 80px 20px rgba(164, 22, 26, 0.32);
   }
   100% {
     box-shadow: inset 0 0 0 0 transparent;
@@ -185,7 +254,7 @@ body {
 
 @keyframes video-punch-magenta {
   30% {
-    box-shadow: inset 0 0 80px 20px rgba(255, 62, 181, 0.35);
+    box-shadow: inset 0 0 80px 20px rgba(184, 50, 58, 0.35);
   }
 }
 
@@ -658,14 +727,14 @@ body {
 }
 
 .rb-column--left .rb-energy-fill {
-  background: linear-gradient(0deg, var(--cyan), #1a8fff);
-  box-shadow: 0 0 20px rgba(62, 232, 255, 0.5);
+  background: linear-gradient(0deg, var(--cyan), var(--sea-mid));
+  box-shadow: 0 0 20px rgba(110, 196, 216, 0.45);
 }
 
 .rb-column--right .rb-energy-fill {
   width: 100%;
-  background: linear-gradient(0deg, var(--magenta), #c42dff);
-  box-shadow: 0 0 20px rgba(255, 62, 181, 0.5);
+  background: linear-gradient(0deg, var(--sail-red), var(--magenta));
+  box-shadow: 0 0 20px rgba(164, 22, 26, 0.45);
 }
 
 .rb-energy-fill {
@@ -727,10 +796,53 @@ body {
   padding: 1.5rem;
   max-width: 520px;
   animation: fade-in 0.4s ease;
-  background: rgba(7, 11, 20, 0.72);
-  backdrop-filter: blur(8px);
+  background: rgba(6, 18, 26, 0.82);
+  backdrop-filter: blur(10px);
   border-radius: 16px;
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(110, 196, 216, 0.12);
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.55), inset 0 1px 0 rgba(212, 168, 75, 0.08);
+  position: relative;
+  overflow: hidden;
+}
+
+.rb--preplay .rb-screen--active::before {
+  content: "";
+  position: absolute;
+  top: -5%;
+  right: -25%;
+  width: min(280px, 70%);
+  height: 45%;
+  opacity: 0.055;
+  pointer-events: none;
+  background: center / contain no-repeat
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 200 120'%3E%3Cpath fill='%23d4a84b' d='M40 95h120v8H40zm15-12h90l-8-35H63l-8 35zm12-38h66l-10-28H77l-10 28zM95 20h10l5-12h-20l5 12z'/%3E%3C/svg%3E");
+}
+
+.rb-epic-kicker {
+  margin: 0 0 0.15rem;
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.35em;
+  text-transform: uppercase;
+  color: var(--gold);
+}
+
+.rb-epic-tagline {
+  margin: 0 0 0.75rem;
+  font-size: 0.9rem;
+  color: var(--muted);
+  letter-spacing: 0.08em;
+}
+
+.rb-screen h1 {
+  font-family: var(--font-display);
+  font-size: clamp(3rem, 12vw, 5rem);
+  margin: 0 0 0.35rem;
+  letter-spacing: 0.22em;
+  background: linear-gradient(90deg, var(--cyan), var(--gold), var(--sail-red));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
 }
 
 .rb-screen--active {
@@ -741,6 +853,7 @@ body {
   background: transparent;
   border: none;
   backdrop-filter: none;
+  box-shadow: none;
 }
 
 @keyframes fade-in {
@@ -752,17 +865,6 @@ body {
     opacity: 1;
     transform: none;
   }
-}
-
-.rb-screen h1 {
-  font-family: var(--font-display);
-  font-size: clamp(3rem, 12vw, 5rem);
-  margin: 0 0 0.5rem;
-  letter-spacing: 0.06em;
-  background: linear-gradient(90deg, var(--cyan), var(--magenta));
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
 }
 
 .rb-screen h2 {
@@ -797,9 +899,9 @@ body {
 }
 
 .rb-btn--primary {
-  background: linear-gradient(135deg, var(--cyan), #2a7dff);
-  color: #041018;
-  box-shadow: 0 8px 32px rgba(62, 232, 255, 0.35);
+  background: linear-gradient(135deg, var(--gold), var(--sail-red));
+  color: #1a0a08;
+  box-shadow: 0 8px 32px rgba(164, 22, 26, 0.35);
 }
 
 .rb-btn--primary:active {
@@ -944,9 +1046,9 @@ body {
 }
 
 .rb-mode--active {
-  border-color: var(--cyan);
-  background: rgba(62, 232, 255, 0.15);
-  box-shadow: 0 0 24px rgba(62, 232, 255, 0.25);
+  border-color: var(--gold);
+  background: rgba(164, 22, 26, 0.2);
+  box-shadow: 0 0 24px rgba(212, 168, 75, 0.2);
 }
 
 .rb-mode-hint {
@@ -975,6 +1077,20 @@ body {
   max-width: 280px;
   margin-left: auto;
   margin-right: auto;
+}
+
+.rb--odyssey-flow .rb-odyssey-waves {
+  opacity: 0.5;
+  animation-duration: 4s;
+}
+
+.rb--odyssey-flow .rb-odyssey-horizon {
+  background: linear-gradient(
+    180deg,
+    rgba(20, 8, 8, 0.5) 0%,
+    rgba(6, 42, 56, 0.25) 40%,
+    rgba(80, 20, 24, 0.35) 100%
+  );
 }
 
 @media (max-width: 600px) {
@@ -1018,9 +1134,9 @@ body {
 .rb--preplay .rb-video-fx {
   background: linear-gradient(
     180deg,
-    rgba(7, 11, 20, 0.82) 0%,
-    rgba(7, 11, 20, 0.72) 50%,
-    rgba(7, 11, 20, 0.85) 100%
+    rgba(2, 12, 20, 0.88) 0%,
+    rgba(6, 42, 56, 0.75) 50%,
+    rgba(3, 18, 28, 0.9) 100%
   );
 }
 

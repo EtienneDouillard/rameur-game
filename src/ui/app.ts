@@ -58,7 +58,7 @@ export class App {
 
   private renderShell(): void {
     this.root.innerHTML = `
-      <div class="rb rb--2p" data-rb>
+      <div class="rb rb--2p rb--odyssey" data-rb>
         <div class="rb-video-stage" data-cam-stage>
           <div class="rb-video-slot"></div>
           <div class="rb-video-fx" data-video-fx></div>
@@ -66,18 +66,23 @@ export class App {
           <div class="rb-video-scanlines" aria-hidden="true"></div>
           <div class="rb-video-divider" data-video-divider aria-hidden="true"></div>
         </div>
+        <div class="rb-odyssey-layer" aria-hidden="true">
+          <div class="rb-odyssey-horizon"></div>
+          <div class="rb-odyssey-waves"></div>
+          <div class="rb-odyssey-grain"></div>
+        </div>
         <canvas class="rb-particles" aria-hidden="true"></canvas>
         <header class="rb-hud">
           <div class="rb-hud-row">
             <div class="rb-hud-side rb-hud-side--left" data-panel="p1">
               <div class="rb-score rb-score--bounce" data-score="p1">0</div>
               <div class="rb-combo" data-combo="p1"></div>
-              <div class="rb-flow-badge" data-flow="p1" hidden>FLOW MODE</div>
+              <div class="rb-flow-badge" data-flow="p1" hidden>VENT ARRIÈRE</div>
             </div>
             <div class="rb-hud-side rb-hud-side--right" data-panel="p2">
               <div class="rb-score rb-score--bounce" data-score="p2">0</div>
               <div class="rb-combo" data-combo="p2"></div>
-              <div class="rb-flow-badge" data-flow="p2" hidden>FLOW MODE</div>
+              <div class="rb-flow-badge" data-flow="p2" hidden>VENT ARRIÈRE</div>
             </div>
           </div>
           <div class="rb-tug" data-tug-wrap>
@@ -88,8 +93,8 @@ export class App {
             </div>
           </div>
           <div class="rb-timer" data-timer>1:30</div>
-          <div class="rb-phase" data-phase>Row Battle</div>
-          <div class="rb-rush-label" data-rush hidden>FINAL !</div>
+          <div class="rb-phase" data-phase>En mer…</div>
+          <div class="rb-rush-label" data-rush hidden>DERNIÈRE LIGNE</div>
         </header>
         <main class="rb-main">
           <div class="rb-column rb-column--left" data-col="p1">
@@ -109,7 +114,9 @@ export class App {
           </div>
           <div class="rb-center">
             <div class="rb-screen rb-screen--active" data-screen="start">
-              <h1>ROW BATTLE</h1>
+              <p class="rb-epic-kicker">L'équipage d'Ulysse</p>
+              <h1>L'ODYSSÉE</h1>
+              <p class="rb-epic-tagline">Row Battle · ramez sur la mer Égée</p>
               <p class="rb-mode-label">Mode de jeu</p>
               <div class="rb-mode-picker" role="group" aria-label="Nombre de joueurs">
                 <button type="button" class="rb-mode rb-mode--active" data-mode="1">1 joueur</button>
@@ -128,13 +135,13 @@ export class App {
                 <button type="button" class="rb-mode rb-mode--active" data-audio-toggle="music">Musique : ON</button>
                 <button type="button" class="rb-mode rb-mode--active" data-audio-toggle="sfx">Effets : ON</button>
               </div>
-              <p class="rb-privacy">La vidéo reste sur cet appareil.</p>
-              <button type="button" class="rb-btn rb-btn--primary" data-action="start">Jouer</button>
+              <p class="rb-privacy">La caméra ne quitte pas le navire (cet appareil).</p>
+              <button type="button" class="rb-btn rb-btn--primary" data-action="start">Embarquer</button>
               <p class="rb-hint" data-load-status></p>
             </div>
             <div class="rb-screen" data-screen="calib">
-              <h2>Calibration</h2>
-              <p>Faites <strong>5 mouvements</strong> de rame face à la caméra (chaque joueur).</p>
+              <h2>Essai des rames</h2>
+              <p>Faites <strong>5 coups</strong> face à la caméra pour calibrer votre rythme de marin.</p>
               <p class="rb-mode-hint" data-calib-hint></p>
               <div class="rb-calib-bars">
                 <div class="rb-calib-bar" data-calib-wrap="p1"><span data-calib="p1"></span></div>
@@ -142,7 +149,7 @@ export class App {
               </div>
             </div>
             <div class="rb-screen rb-screen--play" data-screen="play">
-              <p class="rb-play-hint">Gardez le rythme !</p>
+              <p class="rb-play-hint">À l'unisson, marins !</p>
             </div>
             <div class="rb-screen" data-screen="end">
               <h2 data-winner>Victoire</h2>
@@ -150,7 +157,7 @@ export class App {
                 <div class="rb-result-card" data-result="p1"></div>
                 <div class="rb-result-card" data-result="p2"></div>
               </div>
-              <button type="button" class="rb-btn rb-btn--primary" data-action="replay">Rejouer</button>
+              <button type="button" class="rb-btn rb-btn--primary" data-action="replay">Reprendre la mer</button>
             </div>
           </div>
           <div class="rb-column rb-column--right" data-col="p2">
@@ -242,8 +249,8 @@ export class App {
     const hint = this.root.querySelector<HTMLElement>("[data-mode-hint]")!;
     hint.textContent =
       count === 1
-        ? "Solo : placez-vous au centre du cadre."
-        : "Duo : joueur 1 à gauche, joueur 2 à droite.";
+        ? "Solo : placez-vous au centre du pont."
+        : "Duo : marin de bâbord à gauche, tribord à droite.";
   }
 
   private setMatchDuration(sec: MatchDurationSec): void {
@@ -378,13 +385,13 @@ export class App {
     this.lastPoints = { player1: 0, player2: 0 };
     this.vision?.setPlayerCount(this.playerCount);
     this.showScreen("calib");
-    this.setPhaseText("Calibration…");
+    this.setPhaseText("Essai des rames…");
     const calibHint = this.root.querySelector<HTMLElement>("[data-calib-hint]");
     if (calibHint) {
       calibHint.textContent =
         this.playerCount === 1
-          ? "Comptez vos coups : la barre se remplit à chaque mouvement détecté."
-          : "Joueur 1 à gauche, joueur 2 à droite — 5 coups chacun.";
+          ? "Chaque coup remplit la jauge — comme un essai avant la traversée."
+          : "Deux équipages : 5 coups chacun, même rythme que en mer.";
     }
     this.game.beginCalibration(this.playerCount, this.matchDurationSec);
     this.rhythm.startCalibration(this.playerCount);
@@ -405,7 +412,7 @@ export class App {
       this.calibDone[ev.player] = true;
       if (this.calibrationComplete()) {
         this.showScreen("play");
-        this.setPhaseText("C’est parti !");
+        this.setPhaseText("C'est parti !");
         this.game.startPlaying();
         void this.music?.start();
       }
@@ -499,7 +506,7 @@ export class App {
       const badge = this.root.querySelector<HTMLElement>(`[data-flow="${key}"]`);
       if (badge) {
         badge.hidden = !flow.inFlow;
-        badge.textContent = "FLOW MODE";
+        badge.textContent = "VENT ARRIÈRE";
         badge.classList.toggle("rb-flow-badge--over", flow.inFlow);
       }
 
@@ -609,6 +616,12 @@ export class App {
     const timerEl = this.root.querySelector<HTMLElement>("[data-timer]")!;
     timerEl.textContent = `${m}:${s.toString().padStart(2, "0")}`;
     timerEl.classList.toggle("rb-timer--rush", snap.finalRush);
+
+    const rb = this.root.querySelector<HTMLElement>("[data-rb]")!;
+    const odysseyFlow =
+      snap.phase === "playing" &&
+      (snap.player1.flow.inFlow || snap.player2.flow.inFlow);
+    rb.classList.toggle("rb--odyssey-flow", odysseyFlow);
   }
 
   private updateFlowColumn(key: "p1" | "p2", stats: GameSnapshot["player1"]): void {
